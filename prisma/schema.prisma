@@ -24,17 +24,19 @@ enum UserType {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  phone         String         @unique
-  password      String
-  name          String?
-  age           Int?
-  gender        Gender
-  type          UserType
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  refreshTokens RefreshToken[]
+  id              String         @id @default(uuid())
+  email           String         @unique
+  phone           String         @unique
+  password        String
+  name            String?
+  age             Int?
+  gender          Gender
+  type            UserType
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  refreshTokens   RefreshToken[]
+  reviewsWritten  Review[]       @relation("ReviewsWritten")
+  reviewsReceived Review[]       @relation("ReviewsReceived")
 }
 
 model RefreshToken {
@@ -47,4 +49,18 @@ model RefreshToken {
   createdAt DateTime  @default(now())
 
   @@index([userId])
+}
+
+model Review {
+  id           String   @id @default(uuid())
+  score        Int
+  comment      String?
+  reviewerId   String
+  reviewer     User     @relation("ReviewsWritten", fields: [reviewerId], references: [id], onDelete: Cascade)
+  targetUserId String
+  targetUser   User     @relation("ReviewsReceived", fields: [targetUserId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@index([targetUserId])
+  @@index([reviewerId])
 }

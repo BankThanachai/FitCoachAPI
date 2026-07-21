@@ -207,6 +207,52 @@ curl -X POST http://localhost:3000/api/v1/auth/logout \
 
 ---
 
+## 8. Reviews (Client รีวิว Trainer)
+
+### Flow
+
+```
+POST /api/v1/reviews          → สร้างรีวิว (ต้อง login เป็น Client)
+GET  /api/v1/reviews/user/:userId → ดูรีวิวทั้งหมดของ user คนนั้น + ค่าเฉลี่ย
+```
+
+กติกา:
+- **เฉพาะ Client รีวิวได้** และ **รีวิวได้เฉพาะ Trainer** เท่านั้น (validate ที่ service)
+- **รีวิวซ้ำคนเดิมได้ไม่จำกัดจำนวนครั้ง** ไม่มี unique constraint ระหว่าง reviewer-target
+- `reviewerId` ดึงจาก JWT (`request.user.sub`) เสมอ **ไม่รับจาก body** — กัน client
+  ปลอมตัวเป็นคนอื่นตอนรีวิว
+- `score` ต้องเป็นจำนวนเต็ม 0-5 เท่านั้น (validate ผ่าน DTO)
+- `GET /reviews/user/:userId` ใช้ได้กับ user ทุก type ไม่จำกัดแค่ Trainer เผื่ออนาคต
+  แต่ปัจจุบันจะมีรีวิวจริงเฉพาะ Trainer เท่านั้น (เพราะสร้างได้แค่ Client→Trainer)
+
+### ทดสอบด้วย curl
+
+```bash
+# สร้างรีวิว (ต้องมี accessToken ของ client)
+curl -X POST http://localhost:3000/api/v1/reviews \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <accessToken>" \
+  -d '{"targetUserId":"<trainerId>","score":5,"comment":"เก่งมาก"}'
+
+# ดูรีวิวของ trainer คนนั้น + ค่าเฉลี่ย
+curl http://localhost:3000/api/v1/reviews/user/<trainerId>
+```
+
+Response ของ `GET /reviews/user/:userId`:
+
+```json
+{
+  "reviews": [ { "id": "...", "score": 5, "comment": "...", "reviewerId": "...", "createdAt": "..." } ],
+  "averageScore": 4.5,
+  "totalReviews": 2
+}
+```
+
+`averageScore` คำนวณผ่าน Prisma `aggregate` ที่ระดับ database (ไม่ได้ดึงข้อมูลทั้งหมด
+มาคำนวณใน JS) และปัดเป็นทศนิยม 2 ตำแหน่ง ถ้ายังไม่มีรีวิวเลยจะได้ `averageScore: 0`
+
+---
+
 ## สรุปลำดับสั้นๆ (ถ้าจำได้แค่บรรทัดเดียว)
 
 ```
