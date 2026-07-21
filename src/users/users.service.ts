@@ -3,10 +3,18 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma/client';
+import * as bcrypt from 'bcrypt';
+import { Prisma, User } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+
+const SALT_ROUNDS = 10;
+
+function excludePassword(user: User): Omit<User, 'password'> {
+  const { password, ...rest } = user;
+  return rest;
+}
 
 @Injectable()
 export class UsersService {
@@ -14,14 +22,22 @@ export class UsersService {
 
   async create(createUserDto: CreateUserDto) {
     try {
-      return await this.prisma.user.create({ data: createUserDto });
+      const hashedPassword = await bcrypt.hash(
+        createUserDto.password,
+        SALT_ROUNDS,
+      );
+      const user = await this.prisma.user.create({
+        data: { ...createUserDto, password: hashedPassword },
+      });
+      return excludePassword(user);
     } catch (error) {
       throw this.handlePrismaError(error);
     }
   }
 
-  findAll() {
-    return this.prisma.user.findMany();
+  async findAll() {
+    const users = await this.prisma.user.findMany();
+    return users.map(excludePassword);
   }
 
   async findOne(id: string) {
@@ -29,16 +45,20 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException(`User with id ${id} not found`);
     }
-    return user;
+    return excludePassword(user);
   }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
     await this.findOne(id);
     try {
-      return await this.prisma.user.update({
-        where: { id },
-        data: updateUserDto,
-      });
+      const data = updateUserDto.password
+        ? {
+            ...updateUserDto,
+            password: await bcrypt.hash(updateUserDto.password, SALT_ROUNDS),
+          }
+        : updateUserDto;
+      const user = await this.prisma.user.update({ where: { id }, data });
+      return excludePassword(user);
     } catch (error) {
       throw this.handlePrismaError(error);
     }
@@ -46,7 +66,8 @@ export class UsersService {
 
   async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.user.delete({ where: { id } });
+    const user = await this.prisma.user.delete({ where: { id } });
+    return excludePassword(user);
   }
 
   private handlePrismaError(error: unknown) {
@@ -54,7 +75,7 @@ export class UsersService {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'
     ) {
-      return new ConflictException('Email is already in use');
+      return new ConflictException('Email or phone is already in use');
     }
     return error;
   }
