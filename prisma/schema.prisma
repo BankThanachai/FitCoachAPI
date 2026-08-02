@@ -23,20 +23,39 @@ enum UserType {
   Client
 }
 
+enum MuscleGroup {
+  Legs
+  Chest
+  Back
+  Core
+}
+
+enum ActivityStatus {
+  Assigned
+  Completed
+  Skipped
+}
+
 model User {
-  id              String         @id @default(uuid())
-  email           String         @unique
-  phone           String         @unique
-  password        String
-  name            String?
-  age             Int?
-  gender          Gender
-  type            UserType
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  refreshTokens   RefreshToken[]
-  reviewsWritten  Review[]       @relation("ReviewsWritten")
-  reviewsReceived Review[]       @relation("ReviewsReceived")
+  id                String         @id @default(uuid())
+  email             String         @unique
+  phone             String         @unique
+  password          String
+  name              String?
+  age               Int?
+  gender            Gender
+  type              UserType
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  refreshTokens     RefreshToken[]
+  reviewsWritten    Review[]       @relation("ReviewsWritten")
+  reviewsReceived   Review[]       @relation("ReviewsReceived")
+  exercisesAssigned Exercise[]     @relation("ExercisesAssigned")
+  exercisesCreated  Exercise[]     @relation("ExercisesCreated")
+  cardiosAssigned   Cardio[]       @relation("CardiosAssigned")
+  cardiosCreated    Cardio[]       @relation("CardiosCreated")
+  friendshipsAsA    Friendship[]   @relation("FriendshipsAsA")
+  friendshipsAsB    Friendship[]   @relation("FriendshipsAsB")
 }
 
 model RefreshToken {
@@ -63,4 +82,66 @@ model Review {
 
   @@index([targetUserId])
   @@index([reviewerId])
+}
+
+model Exercise {
+  id           String         @id @default(uuid())
+  name         String
+  muscleGroup  MuscleGroup
+  note         String?
+  status       ActivityStatus @default(Assigned)
+  assignedToId String
+  assignedTo   User           @relation("ExercisesAssigned", fields: [assignedToId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User           @relation("ExercisesCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  sets         ExerciseSet[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([assignedToId])
+  @@index([createdById])
+}
+
+model ExerciseSet {
+  id         String   @id @default(uuid())
+  order      Int
+  weightKg   Decimal
+  reps       Int
+  exerciseId String
+  exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([exerciseId, order])
+}
+
+model Cardio {
+  id           String         @id @default(uuid())
+  activity     String
+  durationMin  Int
+  kcal         Int
+  avgHeartRate Int
+  location     String
+  distanceKm   Decimal?
+  route        String?
+  status       ActivityStatus @default(Assigned)
+  assignedToId String
+  assignedTo   User           @relation("CardiosAssigned", fields: [assignedToId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User           @relation("CardiosCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([assignedToId])
+  @@index([createdById])
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  userAId   String
+  userA     User     @relation("FriendshipsAsA", fields: [userAId], references: [id], onDelete: Cascade)
+  userBId   String
+  userB     User     @relation("FriendshipsAsB", fields: [userBId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userAId, userBId])
+  @@index([userBId])
 }
