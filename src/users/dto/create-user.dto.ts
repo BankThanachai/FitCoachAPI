@@ -14,7 +14,7 @@ export class CreateUserDto {
   @IsEmail()
   email: string;
 
-  @IsPhoneNumber()
+  @IsPhoneNumber('TH')
   phone: string;
 
   @MinLength(8)
@@ -34,4 +34,16 @@ export class CreateUserDto {
 
   @IsEnum(UserType)
   type: UserType;
+
+  @IsString()
+  province: string;
+
+  @IsString()
+  district: string;
+
+  @IsString()
+  subDistrict: string;
+
+  @IsString()
+  postalCode: string;
 }

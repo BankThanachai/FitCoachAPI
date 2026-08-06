@@ -44,6 +44,10 @@ model User {
   name              String?
   age               Int?
   gender            Gender
+  province          String
+  district          String
+  subDistrict       String
+  postalCode        String
   type              UserType
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
