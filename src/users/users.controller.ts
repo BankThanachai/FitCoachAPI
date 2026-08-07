@@ -6,10 +6,12 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+import { SearchTrainerDto } from './dto/search-trainer.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -26,6 +28,12 @@ export class UsersController {
   @Get()
   findAll() {
     return this.usersService.findAll();
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('trainers/search')
+  searchTrainers(@Query() searchTrainerDto: SearchTrainerDto) {
+    return this.usersService.searchTrainers(searchTrainerDto);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { Prisma, User } from '../../generated/prisma/client';
+import { Prisma, User, UserType } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { SearchTrainerDto } from './dto/search-trainer.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 const SALT_ROUNDS = 10;
@@ -38,6 +39,39 @@ export class UsersService {
   async findAll() {
     const users = await this.prisma.user.findMany();
     return users.map(excludePassword);
+  }
+
+  async searchTrainers(searchTrainerDto: SearchTrainerDto) {
+    const page = searchTrainerDto.page ?? 1;
+    const pageSize = searchTrainerDto.pageSize ?? 20;
+    const where: Prisma.UserWhereInput = {
+      type: UserType.Trainer,
+      name: searchTrainerDto.name
+        ? { contains: searchTrainerDto.name, mode: 'insensitive' }
+        : undefined,
+      gender: searchTrainerDto.gender,
+      province: searchTrainerDto.province,
+      district: searchTrainerDto.district,
+      subDistrict: searchTrainerDto.subDistrict,
+    };
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: [{ rating: 'desc' }, { name: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return {
+      data: users.map(excludePassword),
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+      total,
+    };
   }
 
   async findOne(id: string) {
