@@ -34,9 +34,9 @@ export class ExercisesController {
     return this.exercisesService.findAll();
   }
 
-  @Get('assigned/:userId')
-  findByAssigned(@Param('userId') userId: string) {
-    return this.exercisesService.findByAssigned(userId);
+  @Get('my-assigned')
+  findByAssigned(@Req() request: Request & { user: JwtPayload }) {
+    return this.exercisesService.findByAssigned(request.user.sub);
   }
 
   @Get(':id')

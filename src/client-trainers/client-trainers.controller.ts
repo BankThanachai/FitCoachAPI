@@ -30,14 +30,14 @@ export class ClientTrainersController {
     );
   }
 
-  @Get('client/:clientId')
-  findByClient(@Param('clientId') clientId: string) {
-    return this.clientTrainersService.findByClient(clientId);
+  @Get('my-trainers')
+  findByClient(@Req() request: Request & { user: JwtPayload }) {
+    return this.clientTrainersService.findByClient(request.user.sub);
   }
 
-  @Get('trainer/:trainerId')
-  findByTrainer(@Param('trainerId') trainerId: string) {
-    return this.clientTrainersService.findByTrainer(trainerId);
+  @Get('my-clients')
+  findByTrainer(@Req() request: Request & { user: JwtPayload }) {
+    return this.clientTrainersService.findByTrainer(request.user.sub);
   }
 
   @Delete(':trainerId')

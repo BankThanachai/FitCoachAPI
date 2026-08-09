@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
@@ -7,8 +8,10 @@ import {
   IsString,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { Gender, UserType } from '../../../generated/prisma/client';
+import { CreateBankAccountDto } from './create-bank-account.dto';
 
 export class CreateUserDto {
   @IsEmail()
@@ -48,6 +51,7 @@ export class CreateUserDto {
   postalCode: string;
 
   @IsOptional()
-  @IsString()
-  bankAccountNumber?: string;
+  @ValidateNested({ each: true })
+  @Type(() => CreateBankAccountDto)
+  bankAccounts?: CreateBankAccountDto[];
 }

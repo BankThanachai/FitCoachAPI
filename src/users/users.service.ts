@@ -4,22 +4,35 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { Prisma, User, UserType } from '../../generated/prisma/client';
+import {
+  BankAccount,
+  Prisma,
+  User,
+  UserType,
+} from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { WorkingHoursService } from '../working-hours/working-hours.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { SearchTrainerDto } from './dto/search-trainer.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 const SALT_ROUNDS = 10;
 
-function excludePassword(user: User): Omit<User, 'password'> {
+type UserWithBankAccounts = User & { bankAccounts: BankAccount[] };
+
+function excludePassword(
+  user: UserWithBankAccounts,
+): Omit<UserWithBankAccounts, 'password'> {
   const { password, ...rest } = user;
   return rest;
 }
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly workingHoursService: WorkingHoursService,
+  ) {}
 
   async create(createUserDto: CreateUserDto) {
     try {
@@ -27,9 +40,20 @@ export class UsersService {
         createUserDto.password,
         SALT_ROUNDS,
       );
+      const { bankAccounts, ...userData } = createUserDto;
       const user = await this.prisma.user.create({
-        data: { ...createUserDto, password: hashedPassword },
+        data: {
+          ...userData,
+          password: hashedPassword,
+          bankAccounts: bankAccounts ? { create: bankAccounts } : undefined,
+        },
+        include: { bankAccounts: true },
       });
+
+      if (user.type === UserType.Trainer) {
+        await this.workingHoursService.create(user.id, {});
+      }
+
       return excludePassword(user);
     } catch (error) {
       throw this.handlePrismaError(error);
@@ -37,7 +61,9 @@ export class UsersService {
   }
 
   async findAll() {
-    const users = await this.prisma.user.findMany();
+    const users = await this.prisma.user.findMany({
+      include: { bankAccounts: true },
+    });
     return users.map(excludePassword);
   }
 
@@ -58,6 +84,7 @@ export class UsersService {
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
+        include: { bankAccounts: true },
         orderBy: [{ rating: 'desc' }, { name: 'asc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -75,7 +102,10 @@ export class UsersService {
   }
 
   async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { bankAccounts: true },
+    });
     if (!user) {
       throw new NotFoundException(`User with id ${id} not found`);
     }
@@ -85,13 +115,19 @@ export class UsersService {
   async update(id: string, updateUserDto: UpdateUserDto) {
     await this.findOne(id);
     try {
-      const data = updateUserDto.password
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { bankAccounts, ...userData } = updateUserDto;
+      const data = userData.password
         ? {
-            ...updateUserDto,
-            password: await bcrypt.hash(updateUserDto.password, SALT_ROUNDS),
+            ...userData,
+            password: await bcrypt.hash(userData.password, SALT_ROUNDS),
           }
-        : updateUserDto;
-      const user = await this.prisma.user.update({ where: { id }, data });
+        : userData;
+      const user = await this.prisma.user.update({
+        where: { id },
+        data,
+        include: { bankAccounts: true },
+      });
       return excludePassword(user);
     } catch (error) {
       throw this.handlePrismaError(error);
@@ -100,7 +136,10 @@ export class UsersService {
 
   async remove(id: string) {
     await this.findOne(id);
-    const user = await this.prisma.user.delete({ where: { id } });
+    const user = await this.prisma.user.delete({
+      where: { id },
+      include: { bankAccounts: true },
+    });
     return excludePassword(user);
   }
 

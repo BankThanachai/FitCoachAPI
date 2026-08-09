@@ -36,6 +36,21 @@ enum ActivityStatus {
   Skipped
 }
 
+enum DayOfWeek {
+  Monday
+  Tuesday
+  Wednesday
+  Thursday
+  Friday
+  Saturday
+  Sunday
+}
+
+enum WorkingHourStatus {
+  Active
+  Inactive
+}
+
 model User {
   id                      String          @id @default(uuid())
   email                   String          @unique
@@ -48,7 +63,6 @@ model User {
   district                String
   subDistrict             String
   postalCode              String
-  bankAccountNumber       String?
   type                    UserType
   rating                  Float           @default(0)
   createdAt               DateTime        @default(now())
@@ -62,6 +76,20 @@ model User {
   cardiosCreated          Cardio[]        @relation("CardiosCreated")
   clientTrainersAsClient  ClientTrainer[] @relation("ClientTrainersAsClient")
   clientTrainersAsTrainer ClientTrainer[] @relation("ClientTrainersAsTrainer")
+  bankAccounts            BankAccount[]
+  workingHours            WorkingHour[]
+}
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  bankName      String
+  accountNumber String
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model RefreshToken {
@@ -150,4 +178,18 @@ model ClientTrainer {
 
   @@unique([clientId, trainerId])
   @@index([trainerId])
+}
+
+model WorkingHour {
+  id        String            @id @default(uuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayOfWeek DayOfWeek
+  startTime DateTime          @db.Time
+  endTime   DateTime          @db.Time
+  status    WorkingHourStatus @default(Active)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@unique([userId, dayOfWeek])
 }
