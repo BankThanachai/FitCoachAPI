@@ -46,4 +46,8 @@ export class CreateUserDto {
 
   @IsString()
   postalCode: string;
+
+  @IsOptional()
+  @IsString()
+  bankAccountNumber?: string;
 }

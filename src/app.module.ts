@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { ExercisesModule } from './exercises/exercises.module';
 import { CardiosModule } from './cardios/cardios.module';
+import { ClientTrainersModule } from './client-trainers/client-trainers.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { CardiosModule } from './cardios/cardios.module';
     ReviewsModule,
     ExercisesModule,
     CardiosModule,
+    ClientTrainersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

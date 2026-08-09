@@ -37,30 +37,31 @@ enum ActivityStatus {
 }
 
 model User {
-  id                String         @id @default(uuid())
-  email             String         @unique
-  phone             String         @unique
-  password          String
-  name              String?
-  age               Int?
-  gender            Gender
-  province          String
-  district          String
-  subDistrict       String
-  postalCode        String
-  type              UserType
-  rating            Float          @default(0)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  refreshTokens     RefreshToken[]
-  reviewsWritten    Review[]       @relation("ReviewsWritten")
-  reviewsReceived   Review[]       @relation("ReviewsReceived")
-  exercisesAssigned Exercise[]     @relation("ExercisesAssigned")
-  exercisesCreated  Exercise[]     @relation("ExercisesCreated")
-  cardiosAssigned   Cardio[]       @relation("CardiosAssigned")
-  cardiosCreated    Cardio[]       @relation("CardiosCreated")
-  friendshipsAsA    Friendship[]   @relation("FriendshipsAsA")
-  friendshipsAsB    Friendship[]   @relation("FriendshipsAsB")
+  id                      String          @id @default(uuid())
+  email                   String          @unique
+  phone                   String          @unique
+  password                String
+  name                    String?
+  age                     Int?
+  gender                  Gender
+  province                String
+  district                String
+  subDistrict             String
+  postalCode              String
+  bankAccountNumber       String?
+  type                    UserType
+  rating                  Float           @default(0)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  refreshTokens           RefreshToken[]
+  reviewsWritten          Review[]        @relation("ReviewsWritten")
+  reviewsReceived         Review[]        @relation("ReviewsReceived")
+  exercisesAssigned       Exercise[]      @relation("ExercisesAssigned")
+  exercisesCreated        Exercise[]      @relation("ExercisesCreated")
+  cardiosAssigned         Cardio[]        @relation("CardiosAssigned")
+  cardiosCreated          Cardio[]        @relation("CardiosCreated")
+  clientTrainersAsClient  ClientTrainer[] @relation("ClientTrainersAsClient")
+  clientTrainersAsTrainer ClientTrainer[] @relation("ClientTrainersAsTrainer")
 }
 
 model RefreshToken {
@@ -139,14 +140,14 @@ model Cardio {
   @@index([createdById])
 }
 
-model Friendship {
+model ClientTrainer {
   id        String   @id @default(uuid())
-  userAId   String
-  userA     User     @relation("FriendshipsAsA", fields: [userAId], references: [id], onDelete: Cascade)
-  userBId   String
-  userB     User     @relation("FriendshipsAsB", fields: [userBId], references: [id], onDelete: Cascade)
+  clientId  String
+  client    User     @relation("ClientTrainersAsClient", fields: [clientId], references: [id], onDelete: Cascade)
+  trainerId String
+  trainer   User     @relation("ClientTrainersAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
-  @@unique([userAId, userBId])
-  @@index([userBId])
+  @@unique([clientId, trainerId])
+  @@index([trainerId])
 }

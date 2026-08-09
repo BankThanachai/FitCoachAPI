@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExerciseDto } from './dto/create-exercise.dto';
+import { UpdateExerciseDto } from './dto/update-exercise.dto';
 
 @Injectable()
 export class ExercisesService {
@@ -64,5 +65,29 @@ export class ExercisesService {
       include: { sets: true },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async update(id: string, updateExerciseDto: UpdateExerciseDto) {
+    await this.findOne(id);
+
+    if (updateExerciseDto.assignedToId) {
+      const assignedTo = await this.prisma.user.findUnique({
+        where: { id: updateExerciseDto.assignedToId },
+      });
+      if (!assignedTo) {
+        throw new NotFoundException('Assigned user not found');
+      }
+    }
+
+    return this.prisma.exercise.update({
+      where: { id },
+      data: updateExerciseDto,
+      include: { sets: true },
+    });
+  }
+
+  async remove(id: string) {
+    await this.findOne(id);
+    return this.prisma.exercise.delete({ where: { id } });
   }
 }

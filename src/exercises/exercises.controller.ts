@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -11,6 +13,7 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateExerciseDto } from './dto/create-exercise.dto';
+import { UpdateExerciseDto } from './dto/update-exercise.dto';
 import { ExercisesService } from './exercises.service';
 
 @Controller({ path: 'exercises', version: '1' })
@@ -39,5 +42,18 @@ export class ExercisesController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.exercisesService.findOne(id);
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() updateExerciseDto: UpdateExerciseDto,
+  ) {
+    return this.exercisesService.update(id, updateExerciseDto);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.exercisesService.remove(id);
   }
 }
