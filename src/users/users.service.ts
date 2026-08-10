@@ -102,18 +102,18 @@ export class UsersService {
   }
 
   async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-      include: { bankAccounts: true },
-    });
-    if (!user) {
-      throw new NotFoundException(`User with id ${id} not found`);
-    }
-    return excludePassword(user);
+    const user = await this.ensureUserExists(id);
+
+    const workingHours =
+      user.type === UserType.Trainer
+        ? await this.workingHoursService.findByUser(id)
+        : [];
+
+    return { ...excludePassword(user), workingHours };
   }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
-    await this.findOne(id);
+    await this.ensureUserExists(id);
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { bankAccounts, ...userData } = updateUserDto;
@@ -135,12 +135,23 @@ export class UsersService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    await this.ensureUserExists(id);
     const user = await this.prisma.user.delete({
       where: { id },
       include: { bankAccounts: true },
     });
     return excludePassword(user);
+  }
+
+  private async ensureUserExists(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { bankAccounts: true },
+    });
+    if (!user) {
+      throw new NotFoundException(`User with id ${id} not found`);
+    }
+    return user;
   }
 
   private handlePrismaError(error: unknown) {
