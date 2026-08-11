@@ -15,6 +15,13 @@ export class ExercisesService {
       throw new NotFoundException('Assigned user not found');
     }
 
+    const workout = await this.prisma.workout.findUnique({
+      where: { id: createExerciseDto.workoutId },
+    });
+    if (!workout) {
+      throw new NotFoundException('Workout not found');
+    }
+
     return this.prisma.exercise.create({
       data: {
         name: createExerciseDto.name,
@@ -22,6 +29,7 @@ export class ExercisesService {
         note: createExerciseDto.note,
         assignedToId: createExerciseDto.assignedToId,
         createdById,
+        workoutId: createExerciseDto.workoutId,
         sets: {
           create: createExerciseDto.sets.map((set) => ({
             order: set.order,

@@ -51,6 +51,13 @@ enum WorkingHourStatus {
   Inactive
 }
 
+enum WorkoutStatus {
+  Pending
+  Confirmed
+  Completed
+  Cancelled
+}
+
 model User {
   id                      String          @id @default(uuid())
   email                   String          @unique
@@ -78,6 +85,8 @@ model User {
   clientTrainersAsTrainer ClientTrainer[] @relation("ClientTrainersAsTrainer")
   bankAccounts            BankAccount[]
   workingHours            WorkingHour[]
+  workoutsAsClient        Workout[]       @relation("WorkoutsAsClient")
+  workoutsAsTrainer       Workout[]       @relation("WorkoutsAsTrainer")
 }
 
 model BankAccount {
@@ -128,12 +137,15 @@ model Exercise {
   assignedTo   User           @relation("ExercisesAssigned", fields: [assignedToId], references: [id], onDelete: Cascade)
   createdById  String
   createdBy    User           @relation("ExercisesCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  workoutId    String
+  workout      Workout        @relation(fields: [workoutId], references: [id], onDelete: Cascade)
   sets         ExerciseSet[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
   @@index([assignedToId])
   @@index([createdById])
+  @@index([workoutId])
 }
 
 model ExerciseSet {
@@ -192,4 +204,22 @@ model WorkingHour {
   updatedAt DateTime          @updatedAt
 
   @@unique([userId, dayOfWeek])
+}
+
+model Workout {
+  id        String        @id @default(uuid())
+  trainerId String
+  trainer   User          @relation("WorkoutsAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  clientId  String
+  client    User          @relation("WorkoutsAsClient", fields: [clientId], references: [id], onDelete: Cascade)
+  date      DateTime      @db.Date
+  fromTime  DateTime      @db.Time
+  toTime    DateTime      @db.Time
+  status    WorkoutStatus @default(Pending)
+  exercises Exercise[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([trainerId])
+  @@index([clientId])
 }

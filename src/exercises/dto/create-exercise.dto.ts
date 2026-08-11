@@ -24,6 +24,9 @@ export class CreateExerciseDto {
   @IsUUID()
   assignedToId: string;
 
+  @IsUUID()
+  workoutId: string;
+
   @ValidateNested({ each: true })
   @Type(() => CreateExerciseSetDto)
   @ArrayMinSize(1)
