@@ -4,9 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, UserType } from '../../generated/prisma/client';
+import { ClientTrainerStatus, UserType } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClientTrainerDto } from './dto/create-client-trainer.dto';
+import { UpdateClientTrainerStatusDto } from './dto/update-client-trainer-status.dto';
 
 @Injectable()
 export class ClientTrainersService {
@@ -36,22 +37,33 @@ export class ClientTrainersService {
       throw new BadRequestException('Target user is not a trainer');
     }
 
-    try {
-      return await this.prisma.clientTrainer.create({
-        data: {
-          clientId,
-          trainerId: createClientTrainerDto.trainerId,
-        },
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException('This trainer has already been added');
-      }
-      throw error;
+    const latest = await this.findLatest(
+      clientId,
+      createClientTrainerDto.trainerId,
+    );
+    if (
+      latest &&
+      (latest.status === ClientTrainerStatus.Pending ||
+        latest.status === ClientTrainerStatus.Accepted)
+    ) {
+      throw new ConflictException(
+        `This trainer has already been ${latest.status === ClientTrainerStatus.Pending ? 'requested' : 'added'}`,
+      );
     }
+
+    return this.prisma.clientTrainer.create({
+      data: {
+        clientId,
+        trainerId: createClientTrainerDto.trainerId,
+      },
+    });
+  }
+
+  private async findLatest(clientId: string, trainerId: string) {
+    return this.prisma.clientTrainer.findFirst({
+      where: { clientId, trainerId },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   async findByClient(clientId: string) {
@@ -70,15 +82,29 @@ export class ClientTrainersService {
     });
   }
 
-  async remove(clientId: string, trainerId: string) {
-    const relation = await this.prisma.clientTrainer.findUnique({
-      where: { clientId_trainerId: { clientId, trainerId } },
+  async updateStatus(
+    trainerId: string,
+    clientId: string,
+    updateClientTrainerStatusDto: UpdateClientTrainerStatusDto,
+  ) {
+    const relation = await this.findLatest(clientId, trainerId);
+    if (!relation) {
+      throw new NotFoundException('Relation not found');
+    }
+
+    return this.prisma.clientTrainer.update({
+      where: { id: relation.id },
+      data: { status: updateClientTrainerStatusDto.status },
     });
+  }
+
+  async remove(clientId: string, trainerId: string) {
+    const relation = await this.findLatest(clientId, trainerId);
     if (!relation) {
       throw new NotFoundException('Relation not found');
     }
     return this.prisma.clientTrainer.delete({
-      where: { clientId_trainerId: { clientId, trainerId } },
+      where: { id: relation.id },
     });
   }
 }

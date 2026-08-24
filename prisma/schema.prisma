@@ -58,6 +58,12 @@ enum WorkoutStatus {
   Cancelled
 }
 
+enum ClientTrainerStatus {
+  Pending
+  Accepted
+  Rejected
+}
+
 model User {
   id                      String          @id @default(uuid())
   email                   String          @unique
@@ -87,6 +93,7 @@ model User {
   workingHours            WorkingHour[]
   workoutsAsClient        Workout[]       @relation("WorkoutsAsClient")
   workoutsAsTrainer       Workout[]       @relation("WorkoutsAsTrainer")
+  trainerCourses          TrainerCourse[]
 }
 
 model BankAccount {
@@ -181,14 +188,15 @@ model Cardio {
 }
 
 model ClientTrainer {
-  id        String   @id @default(uuid())
+  id        String              @id @default(uuid())
   clientId  String
-  client    User     @relation("ClientTrainersAsClient", fields: [clientId], references: [id], onDelete: Cascade)
+  client    User                @relation("ClientTrainersAsClient", fields: [clientId], references: [id], onDelete: Cascade)
   trainerId String
-  trainer   User     @relation("ClientTrainersAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  trainer   User                @relation("ClientTrainersAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  status    ClientTrainerStatus @default(Pending)
+  createdAt DateTime            @default(now())
 
-  @@unique([clientId, trainerId])
+  @@index([clientId, trainerId])
   @@index([trainerId])
 }
 
@@ -222,4 +230,16 @@ model Workout {
 
   @@index([trainerId])
   @@index([clientId])
+}
+
+model TrainerCourse {
+  id        String   @id @default(uuid())
+  trainerId String
+  trainer   User     @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+  hours     Int
+  price     Decimal
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([trainerId])
 }

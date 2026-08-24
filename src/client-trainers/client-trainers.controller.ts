@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -13,6 +14,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { ClientTrainersService } from './client-trainers.service';
 import { CreateClientTrainerDto } from './dto/create-client-trainer.dto';
+import { UpdateClientTrainerStatusDto } from './dto/update-client-trainer-status.dto';
 
 @Controller({ path: 'client-trainers', version: '1' })
 @UseGuards(JwtAuthGuard)
@@ -38,6 +40,19 @@ export class ClientTrainersController {
   @Get('my-clients')
   findByTrainer(@Req() request: Request & { user: JwtPayload }) {
     return this.clientTrainersService.findByTrainer(request.user.sub);
+  }
+
+  @Patch(':clientId/status')
+  updateStatus(
+    @Req() request: Request & { user: JwtPayload },
+    @Param('clientId') clientId: string,
+    @Body() updateClientTrainerStatusDto: UpdateClientTrainerStatusDto,
+  ) {
+    return this.clientTrainersService.updateStatus(
+      request.user.sub,
+      clientId,
+      updateClientTrainerStatusDto,
+    );
   }
 
   @Delete(':trainerId')

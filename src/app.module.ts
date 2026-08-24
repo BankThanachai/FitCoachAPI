@@ -10,6 +10,7 @@ import { CardiosModule } from './cardios/cardios.module';
 import { ClientTrainersModule } from './client-trainers/client-trainers.module';
 import { WorkingHoursModule } from './working-hours/working-hours.module';
 import { WorkoutsModule } from './workouts/workouts.module';
+import { TrainerCoursesModule } from './trainer-courses/trainer-courses.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { WorkoutsModule } from './workouts/workouts.module';
     ClientTrainersModule,
     WorkingHoursModule,
     WorkoutsModule,
+    TrainerCoursesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

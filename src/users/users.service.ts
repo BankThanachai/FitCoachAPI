@@ -6,6 +6,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import {
   BankAccount,
+  ClientTrainerStatus,
   Prisma,
   User,
   UserType,
@@ -67,7 +68,7 @@ export class UsersService {
     return users.map(excludePassword);
   }
 
-  async searchTrainers(searchTrainerDto: SearchTrainerDto) {
+  async searchTrainers(clientId: string, searchTrainerDto: SearchTrainerDto) {
     const page = searchTrainerDto.page ?? 1;
     const pageSize = searchTrainerDto.pageSize ?? 20;
     const where: Prisma.UserWhereInput = {
@@ -92,8 +93,27 @@ export class UsersService {
       this.prisma.user.count({ where }),
     ]);
 
+    const clientTrainerRelations = await this.prisma.clientTrainer.findMany({
+      where: {
+        clientId,
+        trainerId: { in: users.map((user) => user.id) },
+      },
+      select: { trainerId: true, status: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const statusByTrainerId = new Map<string, ClientTrainerStatus>();
+    for (const relation of clientTrainerRelations) {
+      if (!statusByTrainerId.has(relation.trainerId)) {
+        statusByTrainerId.set(relation.trainerId, relation.status);
+      }
+    }
+
     return {
-      data: users.map(excludePassword),
+      data: users.map((user) => ({
+        ...excludePassword(user),
+        isFriend: statusByTrainerId.has(user.id),
+        clientTrainerStatus: statusByTrainerId.get(user.id) ?? null,
+      })),
       page,
       pageSize,
       totalPages: Math.ceil(total / pageSize),
