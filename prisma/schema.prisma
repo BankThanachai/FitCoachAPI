@@ -94,6 +94,10 @@ model User {
   workoutsAsClient        Workout[]       @relation("WorkoutsAsClient")
   workoutsAsTrainer       Workout[]       @relation("WorkoutsAsTrainer")
   trainerCourses          TrainerCourse[]
+  conversationsAsClient   Conversation[]  @relation("ConversationsAsClient")
+  conversationsAsTrainer  Conversation[]  @relation("ConversationsAsTrainer")
+  messagesSent            Message[]       @relation("MessagesSent")
+  deviceTokens            DeviceToken[]
 }
 
 model BankAccount {
@@ -242,4 +246,41 @@ model TrainerCourse {
   updatedAt DateTime @updatedAt
 
   @@index([trainerId])
+}
+
+model Conversation {
+  id        String    @id @default(uuid())
+  clientId  String
+  client    User      @relation("ConversationsAsClient", fields: [clientId], references: [id], onDelete: Cascade)
+  trainerId String
+  trainer   User      @relation("ConversationsAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  createdAt DateTime  @default(now())
+
+  @@unique([clientId, trainerId])
+  @@index([trainerId])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation("MessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  content        String
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }

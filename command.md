@@ -1,4 +1,4 @@
-# คำสั่งที่ใช้ในโปรเจกต์ FitCoachAPI
+# คำสั่งที่ใช้ในโปรเจกต์ Fit Work API
 
 เรียงตามลำดับที่ต้องทำจริง ตั้งแต่ setup ครั้งแรก ไปจนถึงงานที่ทำซ้ำระหว่าง dev
 
@@ -73,7 +73,7 @@ npx prisma generate
 
 ```bash
 # 1. เช็คก่อนว่าตารางที่จะแก้มีข้อมูลอยู่ไหม (สำคัญ - ถ้ามีข้อมูลอาจต้อง backfill ก่อน)
-docker compose exec -T db psql -U fitcoach -d fitcoach -c 'SELECT count(*) FROM "User";'
+docker compose exec -T db psql -U fitwork -d fitwork -c 'SELECT count(*) FROM "User";'
 
 # 2. สร้าง SQL diff เอง (ไม่ apply ทันที)
 npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script

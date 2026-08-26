@@ -1,6 +1,6 @@
-# FitCoachAPI
+# Fit Work API
 
-Backend API สำหรับต่อกับ FitCoach mobile app
+Backend API สำหรับต่อกับ Fit Work mobile app
 
 ## Stack
 
@@ -56,7 +56,7 @@ npm install
 คัดลอก `.env.example` เป็น `.env` (มีอยู่แล้วสำหรับ dev, ค่า default ใช้ได้เลย)
 
 ```
-DATABASE_URL=postgresql://fitcoach:fitcoach_dev_password@localhost:5432/fitcoach?schema=public
+DATABASE_URL=postgresql://fitwork:fitwork_dev_password@localhost:5432/fitwork?schema=public
 ```
 
 ### 3. รัน PostgreSQL ผ่าน Docker

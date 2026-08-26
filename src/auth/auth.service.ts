@@ -32,7 +32,19 @@ export class AuthService {
       throw new UnauthorizedException('Invalid phone or password');
     }
 
+    if (loginDto.fcmToken) {
+      await this.saveDeviceToken(user.id, loginDto.fcmToken);
+    }
+
     return this.issueTokens(user.id, user.phone, user.type);
+  }
+
+  private async saveDeviceToken(userId: string, token: string) {
+    await this.prisma.deviceToken.upsert({
+      where: { token },
+      update: { userId },
+      create: { userId, token },
+    });
   }
 
   async refresh(rawRefreshToken: string) {
