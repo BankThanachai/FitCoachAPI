@@ -3,13 +3,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserType } from '../../generated/prisma/client';
+import { NotificationType, UserType } from '../../generated/prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateReviewDto } from './dto/create-review.dto';
 
 @Injectable()
 export class ReviewsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(reviewerId: string, createReviewDto: CreateReviewDto) {
     const reviewer = await this.prisma.user.findUnique({
@@ -32,7 +36,7 @@ export class ReviewsService {
       throw new BadRequestException('Reviews can only be written for trainers');
     }
 
-    return this.prisma.review.create({
+    const review = await this.prisma.review.create({
       data: {
         score: createReviewDto.score,
         comment: createReviewDto.comment,
@@ -40,6 +44,17 @@ export class ReviewsService {
         targetUserId: createReviewDto.targetUserId,
       },
     });
+
+    await this.notificationsService.create({
+      userId: createReviewDto.targetUserId,
+      type: NotificationType.NewReview,
+      title: 'You received a new review',
+      body: `${reviewer.name ?? 'A client'} gave you a ${createReviewDto.score}-star review`,
+      entityType: 'Review',
+      entityId: review.id,
+    });
+
+    return review;
   }
 
   async findByUser(targetUserId: string) {

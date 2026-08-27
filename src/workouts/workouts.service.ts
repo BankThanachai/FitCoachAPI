@@ -6,11 +6,13 @@ import {
 } from '@nestjs/common';
 import {
   DayOfWeek,
+  NotificationType,
   UserType,
   WorkingHourStatus,
   Workout,
   WorkoutStatus,
 } from '../../generated/prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkoutDto } from './dto/create-workout.dto';
 import { UpdateWorkoutDto } from './dto/update-workout.dto';
@@ -51,7 +53,10 @@ function serialize(workout: Workout) {
 
 @Injectable()
 export class WorkoutsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   private async ensureNoOverlap(
     trainerId: string,
@@ -120,6 +125,16 @@ export class WorkoutsService {
         toTime,
       },
     });
+
+    await this.notificationsService.create({
+      userId: createWorkoutDto.trainerId,
+      type: NotificationType.WorkoutBooked,
+      title: 'New workout booked',
+      body: `${client.name ?? 'A client'} booked a workout on ${createWorkoutDto.date}`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
     return serialize(workout);
   }
 
@@ -197,6 +212,28 @@ export class WorkoutsService {
       where: { id },
       data: { date, fromTime, toTime, status: updateWorkoutDto.status },
     });
+
+    if (
+      updateWorkoutDto.status &&
+      updateWorkoutDto.status !== existing.status &&
+      (updateWorkoutDto.status === WorkoutStatus.Confirmed ||
+        updateWorkoutDto.status === WorkoutStatus.Cancelled)
+    ) {
+      const isConfirmed = updateWorkoutDto.status === WorkoutStatus.Confirmed;
+      await this.notificationsService.create({
+        userId: workout.clientId,
+        type: isConfirmed
+          ? NotificationType.WorkoutConfirmed
+          : NotificationType.WorkoutCancelled,
+        title: isConfirmed ? 'Workout confirmed' : 'Workout cancelled',
+        body: isConfirmed
+          ? `Your workout on ${serialize(workout).date} has been confirmed`
+          : `Your workout on ${serialize(workout).date} has been cancelled`,
+        entityType: 'Workout',
+        entityId: workout.id,
+      });
+    }
+
     return serialize(workout);
   }
 

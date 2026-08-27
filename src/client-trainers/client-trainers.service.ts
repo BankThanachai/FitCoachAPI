@@ -4,14 +4,22 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ClientTrainerStatus, UserType } from '../../generated/prisma/client';
+import {
+  ClientTrainerStatus,
+  NotificationType,
+  UserType,
+} from '../../generated/prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClientTrainerDto } from './dto/create-client-trainer.dto';
 import { UpdateClientTrainerStatusDto } from './dto/update-client-trainer-status.dto';
 
 @Injectable()
 export class ClientTrainersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(
     clientId: string,
@@ -51,12 +59,23 @@ export class ClientTrainersService {
       );
     }
 
-    return this.prisma.clientTrainer.create({
+    const relation = await this.prisma.clientTrainer.create({
       data: {
         clientId,
         trainerId: createClientTrainerDto.trainerId,
       },
     });
+
+    await this.notificationsService.create({
+      userId: createClientTrainerDto.trainerId,
+      type: NotificationType.ClientTrainerRequest,
+      title: 'New client request',
+      body: `${client.name ?? 'A client'} wants to add you as their trainer`,
+      entityType: 'ClientTrainer',
+      entityId: relation.id,
+    });
+
+    return relation;
   }
 
   private async findLatest(clientId: string, trainerId: string) {
@@ -87,15 +106,31 @@ export class ClientTrainersService {
     clientId: string,
     updateClientTrainerStatusDto: UpdateClientTrainerStatusDto,
   ) {
-    const relation = await this.findLatest(clientId, trainerId);
-    if (!relation) {
+    const existing = await this.findLatest(clientId, trainerId);
+    if (!existing) {
       throw new NotFoundException('Relation not found');
     }
 
-    return this.prisma.clientTrainer.update({
-      where: { id: relation.id },
+    const updated = await this.prisma.clientTrainer.update({
+      where: { id: existing.id },
       data: { status: updateClientTrainerStatusDto.status },
     });
+
+    if (updated.status === ClientTrainerStatus.Accepted) {
+      const trainer = await this.prisma.user.findUnique({
+        where: { id: trainerId },
+      });
+      await this.notificationsService.create({
+        userId: clientId,
+        type: NotificationType.ClientTrainerAccepted,
+        title: 'Trainer request accepted',
+        body: `${trainer?.name ?? 'A trainer'} accepted your request`,
+        entityType: 'ClientTrainer',
+        entityId: updated.id,
+      });
+    }
+
+    return updated;
   }
 
   async remove(clientId: string, trainerId: string) {

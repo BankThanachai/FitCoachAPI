@@ -64,6 +64,16 @@ enum ClientTrainerStatus {
   Rejected
 }
 
+enum NotificationType {
+  WorkoutBooked
+  WorkoutConfirmed
+  WorkoutCancelled
+  ClientTrainerRequest
+  ClientTrainerAccepted
+  NewReview
+  NewMessage
+}
+
 model User {
   id                      String          @id @default(uuid())
   email                   String          @unique
@@ -98,6 +108,7 @@ model User {
   conversationsAsTrainer  Conversation[]  @relation("ConversationsAsTrainer")
   messagesSent            Message[]       @relation("MessagesSent")
   deviceTokens            DeviceToken[]
+  notifications           Notification[]
 }
 
 model BankAccount {
@@ -283,4 +294,20 @@ model DeviceToken {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+model Notification {
+  id         String           @id @default(uuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       NotificationType
+  title      String
+  body       String
+  entityType String?
+  entityId   String?
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }
