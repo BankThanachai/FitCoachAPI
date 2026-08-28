@@ -109,6 +109,7 @@ model User {
   messagesSent            Message[]       @relation("MessagesSent")
   deviceTokens            DeviceToken[]
   notifications           Notification[]
+  coupons                 Coupon[]
 }
 
 model BankAccount {
@@ -240,6 +241,8 @@ model Workout {
   toTime    DateTime      @db.Time
   status    WorkoutStatus @default(Pending)
   exercises Exercise[]
+  couponId  String?       @unique
+  coupon    Coupon?       @relation(fields: [couponId], references: [id])
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
@@ -257,6 +260,22 @@ model TrainerCourse {
   updatedAt DateTime @updatedAt
 
   @@index([trainerId])
+}
+
+model Coupon {
+  id            String    @id @default(uuid())
+  title         String?
+  description   String?
+  clientId      String
+  client        User      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  minHours      Decimal
+  expiresAt     DateTime
+  usedAt        DateTime?
+  usedTrainerId String?
+  workout       Workout?
+  createdAt     DateTime  @default(now())
+
+  @@index([clientId])
 }
 
 model Conversation {

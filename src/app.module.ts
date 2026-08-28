@@ -13,6 +13,7 @@ import { WorkoutsModule } from './workouts/workouts.module';
 import { TrainerCoursesModule } from './trainer-courses/trainer-courses.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { MessagesModule } from './messages/messages.module';
+import { CouponsModule } from './coupons/coupons.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { MessagesModule } from './messages/messages.module';
     TrainerCoursesModule,
     NotificationsModule,
     MessagesModule,
+    CouponsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
