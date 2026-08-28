@@ -12,6 +12,7 @@ import { WorkingHoursModule } from './working-hours/working-hours.module';
 import { WorkoutsModule } from './workouts/workouts.module';
 import { TrainerCoursesModule } from './trainer-courses/trainer-courses.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { MessagesModule } from './messages/messages.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     WorkoutsModule,
     TrainerCoursesModule,
     NotificationsModule,
+    MessagesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
