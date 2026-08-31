@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsUUID, Matches } from 'class-validator';
+import { IsDateString, IsUUID, Matches } from 'class-validator';
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -9,6 +9,9 @@ export class CreateWorkoutDto {
   @IsUUID()
   clientId: string;
 
+  @IsUUID()
+  purchaseId: string;
+
   @IsDateString()
   date: string;
 
@@ -17,8 +20,4 @@ export class CreateWorkoutDto {
 
   @Matches(TIME_PATTERN, { message: 'toTime must be in HH:mm format' })
   toTime: string;
-
-  @IsOptional()
-  @IsUUID()
-  couponId?: string;
 }

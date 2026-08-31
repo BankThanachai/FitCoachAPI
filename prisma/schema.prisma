@@ -74,10 +74,15 @@ enum NotificationType {
   NewMessage
 }
 
+enum CouponType {
+  Standard
+  Trial
+}
+
 model User {
-  id                      String          @id @default(uuid())
-  email                   String          @unique
-  phone                   String          @unique
+  id                      String           @id @default(uuid())
+  email                   String           @unique
+  phone                   String           @unique
   password                String
   name                    String?
   age                     Int?
@@ -87,29 +92,30 @@ model User {
   subDistrict             String
   postalCode              String
   type                    UserType
-  rating                  Float           @default(0)
-  createdAt               DateTime        @default(now())
-  updatedAt               DateTime        @updatedAt
+  rating                  Float            @default(0)
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
   refreshTokens           RefreshToken[]
-  reviewsWritten          Review[]        @relation("ReviewsWritten")
-  reviewsReceived         Review[]        @relation("ReviewsReceived")
-  exercisesAssigned       Exercise[]      @relation("ExercisesAssigned")
-  exercisesCreated        Exercise[]      @relation("ExercisesCreated")
-  cardiosAssigned         Cardio[]        @relation("CardiosAssigned")
-  cardiosCreated          Cardio[]        @relation("CardiosCreated")
-  clientTrainersAsClient  ClientTrainer[] @relation("ClientTrainersAsClient")
-  clientTrainersAsTrainer ClientTrainer[] @relation("ClientTrainersAsTrainer")
+  reviewsWritten          Review[]         @relation("ReviewsWritten")
+  reviewsReceived         Review[]         @relation("ReviewsReceived")
+  exercisesAssigned       Exercise[]       @relation("ExercisesAssigned")
+  exercisesCreated        Exercise[]       @relation("ExercisesCreated")
+  cardiosAssigned         Cardio[]         @relation("CardiosAssigned")
+  cardiosCreated          Cardio[]         @relation("CardiosCreated")
+  clientTrainersAsClient  ClientTrainer[]  @relation("ClientTrainersAsClient")
+  clientTrainersAsTrainer ClientTrainer[]  @relation("ClientTrainersAsTrainer")
   bankAccounts            BankAccount[]
   workingHours            WorkingHour[]
-  workoutsAsClient        Workout[]       @relation("WorkoutsAsClient")
-  workoutsAsTrainer       Workout[]       @relation("WorkoutsAsTrainer")
+  workoutsAsClient        Workout[]        @relation("WorkoutsAsClient")
+  workoutsAsTrainer       Workout[]        @relation("WorkoutsAsTrainer")
   trainerCourses          TrainerCourse[]
-  conversationsAsClient   Conversation[]  @relation("ConversationsAsClient")
-  conversationsAsTrainer  Conversation[]  @relation("ConversationsAsTrainer")
-  messagesSent            Message[]       @relation("MessagesSent")
+  conversationsAsClient   Conversation[]   @relation("ConversationsAsClient")
+  conversationsAsTrainer  Conversation[]   @relation("ConversationsAsTrainer")
+  messagesSent            Message[]        @relation("MessagesSent")
   deviceTokens            DeviceToken[]
   notifications           Notification[]
   coupons                 Coupon[]
+  coursePurchases         CoursePurchase[]
 }
 
 model BankAccount {
@@ -231,51 +237,80 @@ model WorkingHour {
 }
 
 model Workout {
-  id        String        @id @default(uuid())
-  trainerId String
-  trainer   User          @relation("WorkoutsAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
-  clientId  String
-  client    User          @relation("WorkoutsAsClient", fields: [clientId], references: [id], onDelete: Cascade)
-  date      DateTime      @db.Date
-  fromTime  DateTime      @db.Time
-  toTime    DateTime      @db.Time
-  status    WorkoutStatus @default(Pending)
-  exercises Exercise[]
-  couponId  String?       @unique
-  coupon    Coupon?       @relation(fields: [couponId], references: [id])
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id         String         @id @default(uuid())
+  trainerId  String
+  trainer    User           @relation("WorkoutsAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  clientId   String
+  client     User           @relation("WorkoutsAsClient", fields: [clientId], references: [id], onDelete: Cascade)
+  purchaseId String
+  purchase   CoursePurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  date       DateTime       @db.Date
+  fromTime   DateTime       @db.Time
+  toTime     DateTime       @db.Time
+  status     WorkoutStatus  @default(Pending)
+  exercises  Exercise[]
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
 
   @@index([trainerId])
   @@index([clientId])
+  @@index([purchaseId])
 }
 
 model TrainerCourse {
-  id        String   @id @default(uuid())
+  id        String           @id @default(uuid())
   trainerId String
-  trainer   User     @relation(fields: [trainerId], references: [id], onDelete: Cascade)
-  hours     Int
+  trainer   User             @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+  sessions  Int
   price     Decimal
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isTrial   Boolean          @default(false)
+  purchases CoursePurchase[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 
   @@index([trainerId])
 }
 
-model Coupon {
-  id            String    @id @default(uuid())
-  title         String?
-  description   String?
-  clientId      String
-  client        User      @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  minHours      Decimal
-  expiresAt     DateTime
-  usedAt        DateTime?
-  usedTrainerId String?
-  workout       Workout?
-  createdAt     DateTime  @default(now())
+model CoursePurchase {
+  id          String           @id @default(uuid())
+  clientId    String
+  client      User             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  courseId    String
+  course      TrainerCourse    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  purchasedAt DateTime         @default(now())
+  workouts    Workout[]
+  coupons     PurchaseCoupon[]
 
   @@index([clientId])
+  @@index([courseId])
+}
+
+model Coupon {
+  id             String          @id @default(uuid())
+  title          String
+  description    String
+  couponType     CouponType      @default(Standard)
+  clientId       String
+  client         User            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  minSessions    Int?
+  expiresAt      DateTime
+  usedAt         DateTime?
+  usedTrainerId  String?
+  purchaseCoupon PurchaseCoupon?
+  createdAt      DateTime        @default(now())
+
+  @@index([clientId])
+}
+
+model PurchaseCoupon {
+  id         String         @id @default(uuid())
+  purchaseId String
+  purchase   CoursePurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  couponId   String         @unique
+  coupon     Coupon         @relation(fields: [couponId], references: [id])
+  createdAt  DateTime       @default(now())
+
+  @@index([purchaseId])
 }
 
 model Conversation {

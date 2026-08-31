@@ -14,6 +14,7 @@ import { TrainerCoursesModule } from './trainer-courses/trainer-courses.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { MessagesModule } from './messages/messages.module';
 import { CouponsModule } from './coupons/coupons.module';
+import { CoursePurchasesModule } from './course-purchases/course-purchases.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { CouponsModule } from './coupons/coupons.module';
     NotificationsModule,
     MessagesModule,
     CouponsModule,
+    CoursePurchasesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

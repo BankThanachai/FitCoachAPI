@@ -11,11 +11,15 @@ import {
   User,
   UserType,
 } from '../../generated/prisma/client';
+import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkingHoursService } from '../working-hours/working-hours.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { SearchTrainerDto } from './dto/search-trainer.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+
+const TRIAL_COURSE_SESSIONS = 1;
+const TRIAL_COURSE_PRICE = 0;
 
 const SALT_ROUNDS = 10;
 
@@ -33,6 +37,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workingHoursService: WorkingHoursService,
+    private readonly couponsService: CouponsService,
   ) {}
 
   async create(createUserDto: CreateUserDto) {
@@ -42,13 +47,32 @@ export class UsersService {
         SALT_ROUNDS,
       );
       const { bankAccounts, ...userData } = createUserDto;
-      const user = await this.prisma.user.create({
-        data: {
-          ...userData,
-          password: hashedPassword,
-          bankAccounts: bankAccounts ? { create: bankAccounts } : undefined,
-        },
-        include: { bankAccounts: true },
+      const user = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            ...userData,
+            password: hashedPassword,
+            bankAccounts: bankAccounts ? { create: bankAccounts } : undefined,
+          },
+          include: { bankAccounts: true },
+        });
+
+        if (created.type === UserType.Trainer) {
+          await tx.trainerCourse.create({
+            data: {
+              trainerId: created.id,
+              sessions: TRIAL_COURSE_SESSIONS,
+              price: TRIAL_COURSE_PRICE,
+              isTrial: true,
+            },
+          });
+        }
+
+        if (created.type === UserType.Client) {
+          await this.couponsService.issueTrialCoupon(tx, created.id);
+        }
+
+        return created;
       });
 
       if (user.type === UserType.Trainer) {

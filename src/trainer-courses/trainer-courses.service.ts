@@ -4,13 +4,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UserType } from '../../generated/prisma/client';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTrainerCourseDto } from './dto/create-trainer-course.dto';
 import { UpdateTrainerCourseDto } from './dto/update-trainer-course.dto';
 
 @Injectable()
 export class TrainerCoursesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly couponsService: CouponsService,
+  ) {}
 
   async create(
     trainerId: string,
@@ -34,8 +39,25 @@ export class TrainerCoursesService {
   async findByTrainer(trainerId: string) {
     return this.prisma.trainerCourse.findMany({
       where: { trainerId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ sessions: 'asc' }, { createdAt: 'desc' }],
     });
+  }
+
+  async findByTrainerForViewer(trainerId: string, viewer: JwtPayload) {
+    const courses = await this.findByTrainer(trainerId);
+
+    if (viewer.type !== UserType.Client) {
+      return courses;
+    }
+
+    const hasUnusedTrialCoupon = await this.couponsService.hasUnusedTrialCoupon(
+      viewer.sub,
+    );
+    if (hasUnusedTrialCoupon) {
+      return courses;
+    }
+
+    return courses.filter((course) => !course.isTrial);
   }
 
   async findOne(id: string) {

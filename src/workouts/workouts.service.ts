@@ -12,7 +12,7 @@ import {
   Workout,
   WorkoutStatus,
 } from '../../generated/prisma/client';
-import { CouponsService } from '../coupons/coupons.service';
+import { CoursePurchasesService } from '../course-purchases/course-purchases.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkoutDto } from './dto/create-workout.dto';
@@ -57,7 +57,7 @@ export class WorkoutsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
-    private readonly couponsService: CouponsService,
+    private readonly coursePurchasesService: CoursePurchasesService,
   ) {}
 
   private async ensureNoOverlap(
@@ -118,40 +118,21 @@ export class WorkoutsService {
       toTime,
     );
 
-    if (createWorkoutDto.couponId) {
-      const { eligible } = await this.couponsService.checkEligibility(
-        createWorkoutDto.couponId,
-        createWorkoutDto.clientId,
-        createWorkoutDto.trainerId,
-      );
-      if (!eligible) {
-        throw new BadRequestException(
-          'You have not trained enough hours with this trainer to use this coupon',
-        );
-      }
-    }
+    await this.coursePurchasesService.ensureUsable(
+      createWorkoutDto.purchaseId,
+      createWorkoutDto.clientId,
+      createWorkoutDto.trainerId,
+    );
 
-    const workout = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.workout.create({
-        data: {
-          trainerId: createWorkoutDto.trainerId,
-          clientId: createWorkoutDto.clientId,
-          date,
-          fromTime,
-          toTime,
-          couponId: createWorkoutDto.couponId,
-        },
-      });
-
-      if (createWorkoutDto.couponId) {
-        await this.couponsService.redeem(
-          tx,
-          createWorkoutDto.couponId,
-          createWorkoutDto.trainerId,
-        );
-      }
-
-      return created;
+    const workout = await this.prisma.workout.create({
+      data: {
+        trainerId: createWorkoutDto.trainerId,
+        clientId: createWorkoutDto.clientId,
+        purchaseId: createWorkoutDto.purchaseId,
+        date,
+        fromTime,
+        toTime,
+      },
     });
 
     await this.notificationsService.create({

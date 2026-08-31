@@ -1,27 +1,27 @@
 import {
   IsDateString,
-  IsNumber,
-  IsOptional,
+  IsInt,
+  IsNotEmpty,
   IsPositive,
   IsString,
   IsUUID,
 } from 'class-validator';
 
 export class CreateCouponDto {
-  @IsOptional()
   @IsString()
-  title?: string;
+  @IsNotEmpty()
+  title: string;
 
-  @IsOptional()
   @IsString()
-  description?: string;
+  @IsNotEmpty()
+  description: string;
 
   @IsUUID()
   clientId: string;
 
-  @IsNumber()
+  @IsInt()
   @IsPositive()
-  minHours: number;
+  minSessions: number;
 
   @IsDateString()
   expiresAt: string;

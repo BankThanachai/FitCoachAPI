@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CouponType,
   Prisma,
   UserType,
   WorkoutStatus,
@@ -13,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateCouponDto } from './dto/create-coupon.dto';
 
 const PAGE_SIZE = 20;
+const TRIAL_COUPON_EXPIRY_DAYS = 90;
 
 @Injectable()
 export class CouponsService {
@@ -39,7 +41,24 @@ export class CouponsService {
         title: createCouponDto.title,
         description: createCouponDto.description,
         clientId: createCouponDto.clientId,
-        minHours: createCouponDto.minHours,
+        minSessions: createCouponDto.minSessions,
+        expiresAt,
+      },
+    });
+  }
+
+  async issueTrialCoupon(tx: Prisma.TransactionClient, clientId: string) {
+    const expiresAt = new Date(
+      Date.now() + TRIAL_COUPON_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+    );
+    await tx.coupon.create({
+      data: {
+        clientId,
+        couponType: CouponType.Trial,
+        title: 'ทดลองเทรนฟรี 1 ครั้ง',
+        description:
+          'ใช้ได้กับคอร์สทดลองเล่นของเทรนเนอร์คนไหนก็ได้ 1 ครั้ง สำหรับสมาชิกใหม่',
+        minSessions: 0,
         expiresAt,
       },
     });
@@ -65,6 +84,18 @@ export class CouponsService {
     return { coupons: items, page, pageSize: PAGE_SIZE, totalCoupons };
   }
 
+  async hasUnusedTrialCoupon(clientId: string) {
+    const coupon = await this.prisma.coupon.findFirst({
+      where: {
+        clientId,
+        couponType: CouponType.Trial,
+        usedAt: null,
+        expiresAt: { gte: new Date() },
+      },
+    });
+    return coupon !== null;
+  }
+
   private resolveStatus(
     coupon: { usedAt: Date | null; expiresAt: Date },
     now: Date,
@@ -78,24 +109,22 @@ export class CouponsService {
     return 'Active';
   }
 
-  private async computeTrainedHours(clientId: string, trainerId: string) {
-    const workouts = await this.prisma.workout.findMany({
+  private async computeTrainedSessions(clientId: string, trainerId: string) {
+    return this.prisma.workout.count({
       where: {
         clientId,
         trainerId,
         status: { in: [WorkoutStatus.Confirmed, WorkoutStatus.Completed] },
       },
-      select: { fromTime: true, toTime: true },
     });
-
-    const totalMs = workouts.reduce(
-      (sum, w) => sum + (w.toTime.getTime() - w.fromTime.getTime()),
-      0,
-    );
-    return totalMs / (1000 * 60 * 60);
   }
 
-  async checkEligibility(couponId: string, clientId: string, trainerId: string) {
+  async checkEligibility(
+    couponId: string,
+    clientId: string,
+    trainerId: string,
+    isTrialCourse: boolean,
+  ) {
     const coupon = await this.prisma.coupon.findUnique({
       where: { id: couponId },
     });
@@ -112,16 +141,35 @@ export class CouponsService {
       throw new BadRequestException('This coupon has expired');
     }
 
-    const trainedHours = await this.computeTrainedHours(clientId, trainerId);
-    const eligible = trainedHours >= Number(coupon.minHours);
+    if (isTrialCourse) {
+      if (coupon.couponType !== CouponType.Trial) {
+        throw new BadRequestException(
+          'Only a trial coupon can be used on a trial course',
+        );
+      }
+      return { coupon, eligible: true };
+    }
 
-    return { coupon, trainedHours, eligible };
+    if (coupon.couponType !== CouponType.Standard) {
+      throw new BadRequestException(
+        'A trial coupon can only be used on a trial course',
+      );
+    }
+
+    const trainedSessions = await this.computeTrainedSessions(
+      clientId,
+      trainerId,
+    );
+    const eligible = trainedSessions >= (coupon.minSessions ?? 0);
+
+    return { coupon, trainedSessions, eligible };
   }
 
   async redeem(
     tx: Prisma.TransactionClient,
     couponId: string,
     trainerId: string,
+    purchaseId: string,
   ) {
     const result = await tx.coupon.updateMany({
       where: { id: couponId, usedAt: null },
@@ -130,5 +178,9 @@ export class CouponsService {
     if (result.count === 0) {
       throw new BadRequestException('This coupon has already been used');
     }
+
+    await tx.purchaseCoupon.create({
+      data: { purchaseId, couponId },
+    });
   }
 }

@@ -6,10 +6,10 @@ import { CreateReviewDto } from './dto/create-review.dto';
 import { ReviewsService } from './reviews.service';
 
 @Controller({ path: 'reviews', version: '1' })
+@UseGuards(JwtAuthGuard)
 export class ReviewsController {
   constructor(private readonly reviewsService: ReviewsService) {}
 
-  @UseGuards(JwtAuthGuard)
   @Post()
   create(
     @Req() request: Request & { user: JwtPayload },

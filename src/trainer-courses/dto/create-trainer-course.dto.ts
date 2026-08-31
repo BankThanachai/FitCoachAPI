@@ -3,7 +3,7 @@ import { IsInt, IsNumber, Min } from 'class-validator';
 export class CreateTrainerCourseDto {
   @IsInt()
   @Min(1)
-  hours: number;
+  sessions: number;
 
   @IsNumber()
   @Min(0)
