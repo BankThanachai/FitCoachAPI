@@ -7,6 +7,7 @@ import {
 import {
   ClientTrainerStatus,
   NotificationType,
+  Prisma,
   UserType,
 } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -82,6 +83,67 @@ export class ClientTrainersService {
     return this.prisma.clientTrainer.findFirst({
       where: { clientId, trainerId },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Ensures an Accepted relation exists between client and trainer, creating
+   * one if none exists yet. Used by flows that join a trainer implicitly
+   * (e.g. purchase-and-join) rather than through the request/accept flow.
+   * A prior Rejected relation does not block this — same as create(), which
+   * only treats Pending/Accepted as a conflict and lets the client try
+   * again otherwise. Paying for a course is treated as a stronger signal
+   * than a plain request, so a new relation is created as Accepted rather
+   * than Pending.
+   * Notification dispatch is left to the caller, to run after the enclosing
+   * transaction commits (same pattern as create()/updateStatus()).
+   */
+  async ensureAcceptedInTransaction(
+    tx: Prisma.TransactionClient,
+    clientId: string,
+    trainerId: string,
+  ) {
+    const existing = await tx.clientTrainer.findFirst({
+      where: { clientId, trainerId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (existing && existing.status !== ClientTrainerStatus.Rejected) {
+      return { relation: existing, created: false };
+    }
+
+    const client = await tx.user.findUnique({ where: { id: clientId } });
+    if (!client || client.type !== UserType.Client) {
+      throw new BadRequestException('Only clients can join a trainer');
+    }
+
+    const trainer = await tx.user.findUnique({ where: { id: trainerId } });
+    if (!trainer || trainer.type !== UserType.Trainer) {
+      throw new BadRequestException('Target user is not a trainer');
+    }
+
+    const relation = await tx.clientTrainer.create({
+      data: {
+        clientId,
+        trainerId,
+        status: ClientTrainerStatus.Accepted,
+      },
+    });
+
+    return { relation, created: true };
+  }
+
+  async notifyJoined(clientId: string, trainerId: string, relationId: string) {
+    const client = await this.prisma.user.findUnique({
+      where: { id: clientId },
+    });
+    await this.notificationsService.create({
+      userId: trainerId,
+      type: NotificationType.ClientTrainerAccepted,
+      title: 'New client joined',
+      body: `${client?.name ?? 'A client'} joined you and purchased a course`,
+      entityType: 'ClientTrainer',
+      entityId: relationId,
     });
   }
 

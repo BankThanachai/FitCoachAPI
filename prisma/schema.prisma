@@ -79,6 +79,21 @@ enum CouponType {
   Trial
 }
 
+enum PaymentStatus {
+  Pending
+  Successful
+  Failed
+  Expired
+  Reversed
+}
+
+enum PaymentMethod {
+  Card
+  PromptPay
+  TrueMoneyWallet
+  InternetBanking
+}
+
 model User {
   id                      String           @id @default(uuid())
   email                   String           @unique
@@ -116,6 +131,7 @@ model User {
   notifications           Notification[]
   coupons                 Coupon[]
   coursePurchases         CoursePurchase[]
+  payments                Payment[]
 }
 
 model BankAccount {
@@ -280,6 +296,7 @@ model CoursePurchase {
   purchasedAt DateTime         @default(now())
   workouts    Workout[]
   coupons     PurchaseCoupon[]
+  payment     Payment?
 
   @@index([clientId])
   @@index([courseId])
@@ -364,4 +381,52 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([userId, readAt])
+}
+
+model Payment {
+  id             String          @id @default(uuid())
+  clientId       String
+  client         User            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  purchaseId     String?         @unique
+  purchase       CoursePurchase? @relation(fields: [purchaseId], references: [id])
+  opnChargeId    String?         @unique
+  opnSourceId    String?
+  method         PaymentMethod
+  status         PaymentStatus   @default(Pending)
+  amount         Decimal
+  currency       String          @default("THB")
+  paidAt         DateTime?
+  failureCode    String?
+  failureMessage String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  events         PaymentEvent[]
+  refunds        PaymentRefund[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+model PaymentEvent {
+  id         String   @id @default(uuid())
+  paymentId  String
+  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  opnEventId String   @unique
+  eventType  String
+  rawPayload Json
+  receivedAt DateTime @default(now())
+
+  @@index([paymentId])
+}
+
+model PaymentRefund {
+  id          String   @id @default(uuid())
+  paymentId   String
+  payment     Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  opnRefundId String   @unique
+  amount      Decimal
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  @@index([paymentId])
 }

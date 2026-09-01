@@ -8,5 +8,6 @@ import { ClientTrainersService } from './client-trainers.service';
   imports: [AuthModule, NotificationsModule],
   controllers: [ClientTrainersController],
   providers: [ClientTrainersService],
+  exports: [ClientTrainersService],
 })
 export class ClientTrainersModule {}

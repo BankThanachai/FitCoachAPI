@@ -3,22 +3,27 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserType } from '../../generated/prisma/client';
+import { Prisma, UserType } from '../../generated/prisma/client';
+import { ClientTrainersService } from '../client-trainers/client-trainers.service';
 import { CouponsService } from '../coupons/coupons.service';
+import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCoursePurchaseDto } from './dto/create-course-purchase.dto';
+import { PurchaseAndJoinDto } from './dto/purchase-and-join.dto';
 
 @Injectable()
 export class CoursePurchasesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly couponsService: CouponsService,
+    private readonly clientTrainersService: ClientTrainersService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
-  async purchase(
+  async validatePurchase(
     clientId: string,
     courseId: string,
-    createCoursePurchaseDto: CreateCoursePurchaseDto,
+    couponIds: string[],
   ) {
     const client = await this.prisma.user.findUnique({
       where: { id: clientId },
@@ -34,43 +39,118 @@ export class CoursePurchasesService {
       throw new NotFoundException('Course not found');
     }
 
-    const couponIds = createCoursePurchaseDto.couponIds ?? [];
     if (course.isTrial && couponIds.length !== 1) {
       throw new BadRequestException(
         'A trial course requires exactly one trial coupon',
       );
     }
 
+    // for (const couponId of couponIds) {
+    //   const { eligible } = await this.couponsService.checkEligibility(
+    //     couponId,
+    //     clientId,
+    //     course.trainerId,
+    //     course.isTrial,
+    //   );
+    //   if (!eligible) {
+    //     throw new BadRequestException(
+    //       'You have not trained enough sessions with this trainer to use this coupon',
+    //     );
+    //   }
+    // }
+
+    return course;
+  }
+
+  async createPurchaseInTransaction(
+    tx: Prisma.TransactionClient,
+    clientId: string,
+    courseId: string,
+    trainerId: string,
+    couponIds: string[],
+  ) {
+    const purchase = await tx.coursePurchase.create({
+      data: { clientId, courseId },
+    });
+
     for (const couponId of couponIds) {
-      const { eligible } = await this.couponsService.checkEligibility(
-        couponId,
-        clientId,
-        course.trainerId,
-        course.isTrial,
-      );
-      if (!eligible) {
-        throw new BadRequestException(
-          'You have not trained enough sessions with this trainer to use this coupon',
-        );
-      }
+      await this.couponsService.redeem(tx, couponId, trainerId, purchase.id);
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const purchase = await tx.coursePurchase.create({
-        data: { clientId, courseId },
-      });
+    return purchase;
+  }
 
-      for (const couponId of couponIds) {
-        await this.couponsService.redeem(
+  async purchase(
+    clientId: string,
+    courseId: string,
+    createCoursePurchaseDto: CreateCoursePurchaseDto,
+  ) {
+    const couponIds = createCoursePurchaseDto.couponIds ?? [];
+    const course = await this.validatePurchase(clientId, courseId, couponIds);
+
+    return this.prisma.$transaction((tx) =>
+      this.createPurchaseInTransaction(
+        tx,
+        clientId,
+        courseId,
+        course.trainerId,
+        couponIds,
+      ),
+    );
+  }
+
+  async purchaseAndJoin(
+    clientId: string,
+    courseId: string,
+    purchaseAndJoinDto: PurchaseAndJoinDto,
+  ) {
+    const couponIds = purchaseAndJoinDto.couponIds ?? [];
+    const course = await this.validatePurchase(clientId, courseId, couponIds);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const { relation, created: joined } =
+        await this.clientTrainersService.ensureAcceptedInTransaction(
           tx,
-          couponId,
+          clientId,
           course.trainerId,
-          purchase.id,
         );
-      }
 
-      return purchase;
+      const purchase = await this.createPurchaseInTransaction(
+        tx,
+        clientId,
+        courseId,
+        course.trainerId,
+        couponIds,
+      );
+
+      const payment = await this.paymentsService.createInTransaction(
+        tx,
+        clientId,
+        purchase.id,
+        {
+          method: purchaseAndJoinDto.method,
+          amount: purchaseAndJoinDto.amount,
+          opnChargeId: purchaseAndJoinDto.opnChargeId,
+          opnSourceId: purchaseAndJoinDto.opnSourceId,
+        },
+      );
+
+      return { relation, joined, purchase, payment };
     });
+
+    if (result.joined) {
+      await this.clientTrainersService.notifyJoined(
+        clientId,
+        course.trainerId,
+        result.relation.id,
+      );
+    }
+
+    return {
+      clientTrainer: result.relation,
+      purchase: result.purchase,
+      payment: result.payment,
+    };
   }
 
   async findByClient(clientId: string) {
