@@ -22,6 +22,7 @@ export class ClientTrainersService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  /** Client sends a request to add a trainer; starts out Pending until the trainer accepts. */
   async create(
     clientId: string,
     createClientTrainerDto: CreateClientTrainerDto,
@@ -79,6 +80,7 @@ export class ClientTrainersService {
     return relation;
   }
 
+  /** Most recent relation row for this pair, since a client can request the same trainer again after a rejection. */
   private async findLatest(clientId: string, trainerId: string) {
     return this.prisma.clientTrainer.findFirst({
       where: { clientId, trainerId },
@@ -133,6 +135,7 @@ export class ClientTrainersService {
     return { relation, created: true };
   }
 
+  /** Notifies the trainer after ensureAcceptedInTransaction created a new relation (called post-commit, outside the transaction). */
   async notifyJoined(clientId: string, trainerId: string, relationId: string) {
     const client = await this.prisma.user.findUnique({
       where: { id: clientId },
@@ -147,22 +150,86 @@ export class ClientTrainersService {
     });
   }
 
+  /** Trainers this client has a relation with, each annotated with whether they've bought a course and how many sessions remain on the latest purchase. */
   async findByClient(clientId: string) {
-    return this.prisma.clientTrainer.findMany({
+    const relations = await this.prisma.clientTrainer.findMany({
       where: { clientId },
-      include: { trainer: true },
+      include: { trainer: { omit: { password: true } } },
       orderBy: { createdAt: 'desc' },
+    });
+
+    const latestPurchaseByTrainerId = await this.findLatestPurchasesByTrainer(
+      clientId,
+      relations.map((relation) => relation.trainerId),
+    );
+
+    return relations.map((relation) => {
+      const latestPurchase = latestPurchaseByTrainerId.get(
+        relation.trainerId,
+      );
+      return {
+        ...relation,
+        hasPurchase: latestPurchase !== undefined,
+        remainingSessions: latestPurchase?.remainingSessions ?? 0,
+      };
     });
   }
 
+  /**
+   * For each given trainer, finds this client's most recent CoursePurchase
+   * with that trainer and computes its remaining sessions (course.sessions
+   * minus how many Workouts have been booked against it — cancellations
+   * still count, sessions are never refunded). Trainers with no purchase
+   * are simply absent from the returned map.
+   */
+  private async findLatestPurchasesByTrainer(
+    clientId: string,
+    trainerIds: string[],
+  ) {
+    const purchases = await this.prisma.coursePurchase.findMany({
+      where: { clientId, course: { trainerId: { in: trainerIds } } },
+      include: { course: true },
+      orderBy: { purchasedAt: 'desc' },
+    });
+
+    // purchases is already ordered newest-first, so the first purchase seen
+    // per trainer here is that trainer's latest one.
+    const latestByTrainerId = new Map<string, (typeof purchases)[number]>();
+    for (const purchase of purchases) {
+      if (!latestByTrainerId.has(purchase.course.trainerId)) {
+        latestByTrainerId.set(purchase.course.trainerId, purchase);
+      }
+    }
+
+    const usedCounts = await this.prisma.workout.groupBy({
+      by: ['purchaseId'],
+      where: { purchaseId: { in: purchases.map((purchase) => purchase.id) } },
+      _count: true,
+    });
+    const usedByPurchaseId = new Map(
+      usedCounts.map((row) => [row.purchaseId, row._count]),
+    );
+
+    const result = new Map<string, { remainingSessions: number }>();
+    for (const [trainerId, purchase] of latestByTrainerId) {
+      result.set(trainerId, {
+        remainingSessions:
+          purchase.course.sessions - (usedByPurchaseId.get(purchase.id) ?? 0),
+      });
+    }
+    return result;
+  }
+
+  /** Clients this trainer has a relation with (requests, accepted, and rejected). */
   async findByTrainer(trainerId: string) {
     return this.prisma.clientTrainer.findMany({
       where: { trainerId },
-      include: { client: true },
+      include: { client: { omit: { password: true } } },
       orderBy: { createdAt: 'desc' },
     });
   }
 
+  /** Trainer accepts or rejects the client's latest request; notifies the client only on acceptance. */
   async updateStatus(
     trainerId: string,
     clientId: string,
@@ -195,6 +262,7 @@ export class ClientTrainersService {
     return updated;
   }
 
+  /** Deletes the latest relation row for this pair (e.g. client removes a trainer they'd added). */
   async remove(clientId: string, trainerId: string) {
     const relation = await this.findLatest(clientId, trainerId);
     if (!relation) {
