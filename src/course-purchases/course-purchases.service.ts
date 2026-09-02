@@ -8,6 +8,7 @@ import { ClientTrainersService } from '../client-trainers/client-trainers.servic
 import { CouponsService } from '../coupons/coupons.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
 import { CreateCoursePurchaseDto } from './dto/create-course-purchase.dto';
 import { PurchaseAndJoinDto } from './dto/purchase-and-join.dto';
 
@@ -18,6 +19,7 @@ export class CoursePurchasesService {
     private readonly couponsService: CouponsService,
     private readonly clientTrainersService: ClientTrainersService,
     private readonly paymentsService: PaymentsService,
+    private readonly coursePurchaseCalculationsService: CoursePurchaseCalculationsService,
   ) {}
 
   async validatePurchase(
@@ -45,19 +47,11 @@ export class CoursePurchasesService {
       );
     }
 
-    // for (const couponId of couponIds) {
-    //   const { eligible } = await this.couponsService.checkEligibility(
-    //     couponId,
-    //     clientId,
-    //     course.trainerId,
-    //     course.isTrial,
-    //   );
-    //   if (!eligible) {
-    //     throw new BadRequestException(
-    //       'You have not trained enough sessions with this trainer to use this coupon',
-    //     );
-    //   }
-    // }
+    await this.couponsService.validateCouponsForCourse(
+      couponIds,
+      clientId,
+      course,
+    );
 
     return course;
   }
@@ -160,37 +154,15 @@ export class CoursePurchasesService {
       orderBy: { purchasedAt: 'desc' },
     });
 
-    const remainingByPurchase = await this.computeRemainingSessions(
-      purchases.map((p) => p.id),
-    );
+    const remainingByPurchase =
+      await this.coursePurchaseCalculationsService.computeRemainingSessions(
+        purchases.map((p) => p.id),
+      );
 
     return purchases.map((purchase) => ({
       ...purchase,
       remainingSessions: remainingByPurchase.get(purchase.id) ?? 0,
     }));
-  }
-
-  private async computeRemainingSessions(purchaseIds: string[]) {
-    const purchases = await this.prisma.coursePurchase.findMany({
-      where: { id: { in: purchaseIds } },
-      include: { course: true },
-    });
-
-    const usedCounts = await this.prisma.workout.groupBy({
-      by: ['purchaseId'],
-      where: { purchaseId: { in: purchaseIds } },
-      _count: true,
-    });
-    const usedByPurchaseId = new Map(
-      usedCounts.map((row) => [row.purchaseId, row._count]),
-    );
-
-    return new Map(
-      purchases.map((purchase) => [
-        purchase.id,
-        purchase.course.sessions - (usedByPurchaseId.get(purchase.id) ?? 0),
-      ]),
-    );
   }
 
   async ensureUsable(purchaseId: string, clientId: string, trainerId: string) {
@@ -212,7 +184,10 @@ export class CoursePurchasesService {
       );
     }
 
-    const remaining = await this.computeRemainingSessions([purchaseId]);
+    const remaining =
+      await this.coursePurchaseCalculationsService.computeRemainingSessions([
+        purchaseId,
+      ]);
     const remainingSessions = remaining.get(purchaseId) ?? 0;
     if (remainingSessions <= 0) {
       throw new BadRequestException(

@@ -5,10 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  Coupon,
   CouponType,
   Prisma,
   UserType,
-  WorkoutStatus,
 } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCouponDto } from './dto/create-coupon.dto';
@@ -109,60 +109,72 @@ export class CouponsService {
     return 'Active';
   }
 
-  private async computeTrainedSessions(clientId: string, trainerId: string) {
-    return this.prisma.workout.count({
-      where: {
-        clientId,
-        trainerId,
-        status: { in: [WorkoutStatus.Confirmed, WorkoutStatus.Completed] },
-      },
-    });
-  }
-
-  async checkEligibility(
-    couponId: string,
+  /**
+   * Validates that couponIds can all be applied to a purchase of the given
+   * course, and returns the loaded Coupon rows if so.
+   *
+   * Rules:
+   * - Every coupon must belong to clientId, be unused, and unexpired.
+   * - couponType must match course.isTrial (Trial coupons only on trial
+   *   courses, Standard coupons only on non-trial courses).
+   * - For non-trial courses, the sum of minSessions across all coupons in
+   *   this batch must not exceed course.sessions — e.g. a course with 20
+   *   sessions can absorb two 10-session coupons or one 20-session coupon,
+   *   but not two 20-session coupons. Trial coupons carry minSessions=0,
+   *   so this sum is always satisfied for trial courses.
+   */
+  async validateCouponsForCourse(
+    couponIds: string[],
     clientId: string,
-    trainerId: string,
-    isTrialCourse: boolean,
-  ) {
-    const coupon = await this.prisma.coupon.findUnique({
-      where: { id: couponId },
-    });
-    if (!coupon) {
-      throw new NotFoundException('Coupon not found');
-    }
-    if (coupon.clientId !== clientId) {
-      throw new ForbiddenException('This coupon does not belong to you');
-    }
-    if (coupon.usedAt) {
-      throw new BadRequestException('This coupon has already been used');
-    }
-    if (coupon.expiresAt < new Date()) {
-      throw new BadRequestException('This coupon has expired');
+    course: { sessions: number; isTrial: boolean },
+  ): Promise<Coupon[]> {
+    if (couponIds.length === 0) {
+      return [];
     }
 
-    if (isTrialCourse) {
-      if (coupon.couponType !== CouponType.Trial) {
+    const coupons = await this.prisma.coupon.findMany({
+      where: { id: { in: couponIds } },
+    });
+    if (coupons.length !== couponIds.length) {
+      throw new NotFoundException('One or more coupons were not found');
+    }
+
+    const now = new Date();
+    const expectedType = course.isTrial
+      ? CouponType.Trial
+      : CouponType.Standard;
+    for (const coupon of coupons) {
+      if (coupon.clientId !== clientId) {
+        throw new ForbiddenException('This coupon does not belong to you');
+      }
+      if (coupon.usedAt) {
+        throw new BadRequestException('This coupon has already been used');
+      }
+      if (coupon.expiresAt < now) {
+        throw new BadRequestException('This coupon has expired');
+      }
+      if (coupon.couponType !== expectedType) {
         throw new BadRequestException(
-          'Only a trial coupon can be used on a trial course',
+          course.isTrial
+            ? 'Only a trial coupon can be used on a trial course'
+            : 'A trial coupon can only be used on a trial course',
         );
       }
-      return { coupon, eligible: true };
     }
 
-    if (coupon.couponType !== CouponType.Standard) {
-      throw new BadRequestException(
-        'A trial coupon can only be used on a trial course',
+    if (!course.isTrial) {
+      const totalMinSessions = coupons.reduce(
+        (sum, coupon) => sum + (coupon.minSessions ?? 0),
+        0,
       );
+      if (totalMinSessions > course.sessions) {
+        throw new BadRequestException(
+          'The combined session requirement of these coupons exceeds the sessions in this course',
+        );
+      }
     }
 
-    const trainedSessions = await this.computeTrainedSessions(
-      clientId,
-      trainerId,
-    );
-    const eligible = trainedSessions >= (coupon.minSessions ?? 0);
-
-    return { coupon, trainedSessions, eligible };
+    return coupons;
   }
 
   async redeem(

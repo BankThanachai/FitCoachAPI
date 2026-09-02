@@ -12,6 +12,7 @@ import {
 } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
 import { CreateClientTrainerDto } from './dto/create-client-trainer.dto';
 import { UpdateClientTrainerStatusDto } from './dto/update-client-trainer-status.dto';
 
@@ -20,6 +21,7 @@ export class ClientTrainersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly coursePurchaseCalculationsService: CoursePurchaseCalculationsService,
   ) {}
 
   /** Client sends a request to add a trainer; starts out Pending until the trainer accepts. */
@@ -150,7 +152,7 @@ export class ClientTrainersService {
     });
   }
 
-  /** Trainers this client has a relation with, each annotated with whether they've bought a course and how many sessions remain on the latest purchase. */
+  /** Trainers this client has a relation with, each annotated with their latest course purchase when it still has remaining sessions. */
   async findByClient(clientId: string) {
     const relations = await this.prisma.clientTrainer.findMany({
       where: { clientId },
@@ -169,8 +171,10 @@ export class ClientTrainersService {
       );
       return {
         ...relation,
-        hasPurchase: latestPurchase !== undefined,
-        remainingSessions: latestPurchase?.remainingSessions ?? 0,
+        latestPurchase:
+          latestPurchase && latestPurchase.remainingSessions > 0
+            ? latestPurchase
+            : null,
       };
     });
   }
@@ -180,7 +184,9 @@ export class ClientTrainersService {
    * with that trainer and computes its remaining sessions (course.sessions
    * minus how many Workouts have been booked against it — cancellations
    * still count, sessions are never refunded). Trainers with no purchase
-   * are simply absent from the returned map.
+   * are simply absent from the returned map. Note this is the latest
+   * purchase by date regardless of remainingSessions; callers that only
+   * want an active (remainingSessions > 0) purchase must check that field.
    */
   private async findLatestPurchasesByTrainer(
     clientId: string,
@@ -201,21 +207,20 @@ export class ClientTrainersService {
       }
     }
 
-    const usedCounts = await this.prisma.workout.groupBy({
-      by: ['purchaseId'],
-      where: { purchaseId: { in: purchases.map((purchase) => purchase.id) } },
-      _count: true,
-    });
-    const usedByPurchaseId = new Map(
-      usedCounts.map((row) => [row.purchaseId, row._count]),
-    );
+    // Delegate to the shared calculator so this stays in sync with the
+    // remaining-sessions rule used everywhere else (see that method's doc).
+    const remainingByPurchaseId =
+      await this.coursePurchaseCalculationsService.computeRemainingSessions(
+        Array.from(latestByTrainerId.values()).map((purchase) => purchase.id),
+      );
 
-    const result = new Map<string, { remainingSessions: number }>();
+    const result = new Map<
+      string,
+      (typeof purchases)[number] & { remainingSessions: number }
+    >();
     for (const [trainerId, purchase] of latestByTrainerId) {
-      result.set(trainerId, {
-        remainingSessions:
-          purchase.course.sessions - (usedByPurchaseId.get(purchase.id) ?? 0),
-      });
+      const remainingSessions = remainingByPurchaseId.get(purchase.id) ?? 0;
+      result.set(trainerId, Object.assign({}, purchase, { remainingSessions }));
     }
     return result;
   }
