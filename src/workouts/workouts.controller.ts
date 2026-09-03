@@ -43,6 +43,17 @@ export class WorkoutsController {
     return this.workoutsService.findByTrainer(request.user.sub);
   }
 
+  @Get('my-clients/:clientId')
+  findMyClientWorkouts(
+    @Req() request: Request & { user: JwtPayload },
+    @Param('clientId') clientId: string,
+  ) {
+    return this.workoutsService.findMyClientWorkouts(
+      request.user.sub,
+      clientId,
+    );
+  }
+
   @Get('availability/:trainerId')
   getAvailableTimeOnDate(
     @Param('trainerId') trainerId: string,

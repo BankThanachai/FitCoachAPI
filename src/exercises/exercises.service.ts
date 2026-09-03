@@ -1,11 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  NotificationType,
+  WorkoutStatus,
+} from '../../generated/prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExerciseDto } from './dto/create-exercise.dto';
 import { UpdateExerciseDto } from './dto/update-exercise.dto';
 
 @Injectable()
 export class ExercisesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(createdById: string, createExerciseDto: CreateExerciseDto) {
     const assignedTo = await this.prisma.user.findUnique({
@@ -21,8 +33,13 @@ export class ExercisesService {
     if (!workout) {
       throw new NotFoundException('Workout not found');
     }
+    if (workout.status === WorkoutStatus.Cancelled) {
+      throw new BadRequestException(
+        'Cannot add exercises to a cancelled workout',
+      );
+    }
 
-    return this.prisma.exercise.create({
+    const exercise = await this.prisma.exercise.create({
       data: {
         name: createExerciseDto.name,
         muscleGroup: createExerciseDto.muscleGroup,
@@ -40,6 +57,28 @@ export class ExercisesService {
       },
       include: { sets: true },
     });
+
+    // Adding exercises to a workout implicitly confirms it, but only from
+    // Pending — an already Confirmed or Completed workout keeps its status.
+    // The status guard lives in the where clause so a concurrent update
+    // can't be clobbered, and count tells us whether we actually confirmed.
+    const { count } = await this.prisma.workout.updateMany({
+      where: { id: workout.id, status: WorkoutStatus.Pending },
+      data: { status: WorkoutStatus.Confirmed },
+    });
+
+    if (count > 0) {
+      await this.notificationsService.create({
+        userId: workout.clientId,
+        type: NotificationType.WorkoutConfirmed,
+        title: 'Workout confirmed',
+        body: `Your workout on ${workout.date.toISOString().slice(0, 10)} has been confirmed`,
+        entityType: 'Workout',
+        entityId: workout.id,
+      });
+    }
+
+    return exercise;
   }
 
   async findAll() {

@@ -1,10 +1,12 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  ClientTrainerStatus,
   DayOfWeek,
   NotificationType,
   UserType,
@@ -167,6 +169,32 @@ export class WorkoutsService {
   async findByTrainer(trainerId: string) {
     const workouts = await this.prisma.workout.findMany({
       where: { trainerId },
+      include: { exercises: { include: { sets: true } } },
+      orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
+    });
+    return workouts.map(serialize);
+  }
+
+  /**
+   * Workouts between the requesting trainer and one specific client of
+   * theirs. Verifies an Accepted ClientTrainer relation exists between
+   * them first — a trainer can't look up a client they aren't actually
+   * connected to.
+   */
+  async findMyClientWorkouts(trainerId: string, clientId: string) {
+    const relation = await this.prisma.clientTrainer.findFirst({
+      where: {
+        trainerId,
+        clientId,
+        status: ClientTrainerStatus.Accepted,
+      },
+    });
+    if (!relation) {
+      throw new ForbiddenException('This client is not one of yours');
+    }
+
+    const workouts = await this.prisma.workout.findMany({
+      where: { trainerId, clientId },
       include: { exercises: { include: { sets: true } } },
       orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
     });
