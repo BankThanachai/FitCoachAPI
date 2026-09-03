@@ -212,10 +212,86 @@ export class WorkoutsService {
     return serialize(workout);
   }
 
+  /**
+   * Client requests that a workout be marked done, moving it from
+   * Confirmed to PendingApproval so the trainer can approve it into
+   * Completed. Only the client on the workout may call this, and only
+   * from Confirmed.
+   */
+  async requestCompletion(id: string, clientId: string) {
+    const workout = await this.prisma.workout.findUnique({ where: { id } });
+    if (!workout) {
+      throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (workout.clientId !== clientId) {
+      throw new ForbiddenException(
+        'Only the client on this workout can request completion',
+      );
+    }
+
+    const { count } = await this.prisma.workout.updateMany({
+      where: { id, status: WorkoutStatus.Confirmed },
+      data: { status: WorkoutStatus.PendingApproval },
+    });
+    if (count === 0) {
+      throw new BadRequestException(
+        'Only a confirmed workout can be marked as completed',
+      );
+    }
+
+    await this.notificationsService.create({
+      userId: workout.trainerId,
+      type: NotificationType.WorkoutPendingApproval,
+      title: 'Workout awaiting your approval',
+      body: `A workout on ${serialize(workout).date} was marked done and needs your approval`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Trainer approves a client's completion request, moving it from
+   * PendingApproval to Completed. Only the trainer on the workout may call
+   * this, and only from PendingApproval.
+   */
+  async approveCompletion(id: string, trainerId: string) {
+    const workout = await this.prisma.workout.findUnique({ where: { id } });
+    if (!workout) {
+      throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (workout.trainerId !== trainerId) {
+      throw new ForbiddenException(
+        'Only the trainer on this workout can approve it',
+      );
+    }
+
+    const { count } = await this.prisma.workout.updateMany({
+      where: { id, status: WorkoutStatus.PendingApproval },
+      data: { status: WorkoutStatus.Completed },
+    });
+    if (count === 0) {
+      throw new BadRequestException(
+        'Only a workout pending approval can be approved',
+      );
+    }
+
+    return this.findOne(id);
+  }
+
   async update(id: string, updateWorkoutDto: UpdateWorkoutDto) {
     const existing = await this.prisma.workout.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (
+      updateWorkoutDto.status === WorkoutStatus.PendingApproval ||
+      updateWorkoutDto.status === WorkoutStatus.Completed
+    ) {
+      throw new BadRequestException(
+        'Use the request-completion/approve endpoints to move a workout through PendingApproval and Completed',
+      );
     }
 
     const date = updateWorkoutDto.date

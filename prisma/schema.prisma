@@ -54,6 +54,7 @@ enum WorkingHourStatus {
 enum WorkoutStatus {
   Pending
   Confirmed
+  PendingApproval
   Completed
   Cancelled
 }
@@ -68,6 +69,7 @@ enum NotificationType {
   WorkoutBooked
   WorkoutConfirmed
   WorkoutCancelled
+  WorkoutPendingApproval
   ClientTrainerRequest
   ClientTrainerAccepted
   NewReview

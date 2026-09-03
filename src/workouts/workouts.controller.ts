@@ -85,4 +85,20 @@ export class WorkoutsController {
   update(@Param('id') id: string, @Body() updateWorkoutDto: UpdateWorkoutDto) {
     return this.workoutsService.update(id, updateWorkoutDto);
   }
+
+  @Post(':id/request-completion')
+  requestCompletion(
+    @Req() request: Request & { user: JwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.workoutsService.requestCompletion(id, request.user.sub);
+  }
+
+  @Post(':id/approve-request')
+  approve(
+    @Req() request: Request & { user: JwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.workoutsService.approveCompletion(id, request.user.sub);
+  }
 }
