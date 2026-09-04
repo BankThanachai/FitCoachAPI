@@ -318,6 +318,7 @@ model Coupon {
   clientId       String
   client         User            @relation(fields: [clientId], references: [id], onDelete: Cascade)
   minSessions    Int?
+  bonusSessions  Int             @default(1)
   expiresAt      DateTime
   usedAt         DateTime?
   usedTrainerId  String?

@@ -6,16 +6,21 @@ export class CoursePurchaseCalculationsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Remaining-sessions calculation: course.sessions minus how many Workouts
-   * have been booked against each purchase (cancellations still count —
-   * sessions are never refunded). This is the single source of truth for
-   * this number — CoursePurchasesService and ClientTrainersService both
-   * depend on it via SharedModule; do not duplicate this logic elsewhere.
+   * Remaining/used-sessions calculation for each purchase:
+   * - usedSessions: how many Workouts have been booked against the purchase
+   *   (cancellations still count — sessions are never refunded).
+   * - remainingSessions: course.sessions, plus the bonusSessions of any
+   *   coupons redeemed on the purchase (a coupon grants that many bonus
+   *   sessions on top of the course — separate from minSessions, which only
+   *   gates which courses the coupon can be applied to), minus usedSessions.
+   * This is the single source of truth for these numbers —
+   * CoursePurchasesService and ClientTrainersService both depend on it via
+   * SharedModule; do not duplicate this logic elsewhere.
    */
   async computeRemainingSessions(purchaseIds: string[]) {
     const purchases = await this.prisma.coursePurchase.findMany({
       where: { id: { in: purchaseIds } },
-      include: { course: true },
+      include: { course: true, coupons: { include: { coupon: true } } },
     });
 
     const usedCounts = await this.prisma.workout.groupBy({
@@ -28,10 +33,16 @@ export class CoursePurchaseCalculationsService {
     );
 
     return new Map(
-      purchases.map((purchase) => [
-        purchase.id,
-        purchase.course.sessions - (usedByPurchaseId.get(purchase.id) ?? 0),
-      ]),
+      purchases.map((purchase) => {
+        const bonusSessions = purchase.coupons.reduce(
+          (sum, { coupon }) => sum + coupon.bonusSessions,
+          0,
+        );
+        const usedSessions = usedByPurchaseId.get(purchase.id) ?? 0;
+        const remainingSessions =
+          purchase.course.sessions + bonusSessions - usedSessions;
+        return [purchase.id, { remainingSessions, usedSessions }];
+      }),
     );
   }
 }

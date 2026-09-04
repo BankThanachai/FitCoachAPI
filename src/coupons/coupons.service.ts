@@ -42,6 +42,7 @@ export class CouponsService {
         description: createCouponDto.description,
         clientId: createCouponDto.clientId,
         minSessions: createCouponDto.minSessions,
+        bonusSessions: createCouponDto.bonusSessions,
         expiresAt,
       },
     });
@@ -59,6 +60,7 @@ export class CouponsService {
         description:
           'ใช้ได้กับคอร์สทดลองเล่นของเทรนเนอร์คนไหนก็ได้ 1 ครั้ง สำหรับสมาชิกใหม่',
         minSessions: 0,
+        bonusSessions: 0,
         expiresAt,
       },
     });

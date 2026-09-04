@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -12,6 +13,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CoursePurchasesService } from './course-purchases.service';
 import { CreateCoursePurchaseDto } from './dto/create-course-purchase.dto';
+import { FindMyCoursePurchasesDto } from './dto/find-my-course-purchases.dto';
 import { PurchaseAndJoinDto } from './dto/purchase-and-join.dto';
 
 @Controller({ version: '1' })
@@ -48,7 +50,13 @@ export class CoursePurchasesController {
   }
 
   @Get('users/me/course-purchases')
-  findMine(@Req() request: Request & { user: JwtPayload }) {
-    return this.coursePurchasesService.findByClient(request.user.sub);
+  findMine(
+    @Req() request: Request & { user: JwtPayload },
+    @Query() query: FindMyCoursePurchasesDto,
+  ) {
+    return this.coursePurchasesService.findMyPurchasesUnderTrainer(
+      request.user.sub,
+      query.trainerId,
+    );
   }
 }

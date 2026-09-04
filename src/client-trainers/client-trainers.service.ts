@@ -209,18 +209,27 @@ export class ClientTrainersService {
 
     // Delegate to the shared calculator so this stays in sync with the
     // remaining-sessions rule used everywhere else (see that method's doc).
-    const remainingByPurchaseId =
+    const sessionsByPurchaseId =
       await this.coursePurchaseCalculationsService.computeRemainingSessions(
         Array.from(latestByTrainerId.values()).map((purchase) => purchase.id),
       );
 
     const result = new Map<
       string,
-      (typeof purchases)[number] & { remainingSessions: number }
+      (typeof purchases)[number] & {
+        remainingSessions: number;
+        usedSessions: number;
+      }
     >();
     for (const [trainerId, purchase] of latestByTrainerId) {
-      const remainingSessions = remainingByPurchaseId.get(purchase.id) ?? 0;
-      result.set(trainerId, Object.assign({}, purchase, { remainingSessions }));
+      const sessions = sessionsByPurchaseId.get(purchase.id);
+      result.set(
+        trainerId,
+        Object.assign({}, purchase, {
+          remainingSessions: sessions?.remainingSessions ?? 0,
+          usedSessions: sessions?.usedSessions ?? 0,
+        }),
+      );
     }
     return result;
   }

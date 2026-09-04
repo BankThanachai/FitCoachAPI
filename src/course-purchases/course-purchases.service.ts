@@ -147,22 +147,32 @@ export class CoursePurchasesService {
     };
   }
 
-  async findByClient(clientId: string) {
+  /**
+   * A client's own course purchases, optionally narrowed to the courses of
+   * one specific trainer (e.g. when a client wants to see only what they've
+   * bought from a trainer they're currently viewing).
+   */
+  async findMyPurchasesUnderTrainer(clientId: string, trainerId?: string) {
     const purchases = await this.prisma.coursePurchase.findMany({
-      where: { clientId },
-      include: { course: true },
+      where: { clientId, course: trainerId ? { trainerId } : undefined },
+      include: { course: true, _count: { select: { coupons: true } } },
       orderBy: { purchasedAt: 'desc' },
     });
 
-    const remainingByPurchase =
+    const sessionsByPurchase =
       await this.coursePurchaseCalculationsService.computeRemainingSessions(
         purchases.map((p) => p.id),
       );
 
-    return purchases.map((purchase) => ({
-      ...purchase,
-      remainingSessions: remainingByPurchase.get(purchase.id) ?? 0,
-    }));
+    return purchases.map(({ _count, ...purchase }) => {
+      const sessions = sessionsByPurchase.get(purchase.id);
+      return {
+        ...purchase,
+        remainingSessions: sessions?.remainingSessions ?? 0,
+        usedSessions: sessions?.usedSessions ?? 0,
+        couponsUsed: _count.coupons,
+      };
+    });
   }
 
   async ensureUsable(purchaseId: string, clientId: string, trainerId: string) {
@@ -188,7 +198,7 @@ export class CoursePurchasesService {
       await this.coursePurchaseCalculationsService.computeRemainingSessions([
         purchaseId,
       ]);
-    const remainingSessions = remaining.get(purchaseId) ?? 0;
+    const remainingSessions = remaining.get(purchaseId)?.remainingSessions ?? 0;
     if (remainingSessions <= 0) {
       throw new BadRequestException(
         'No remaining sessions left on this course purchase',

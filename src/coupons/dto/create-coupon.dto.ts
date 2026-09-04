@@ -23,6 +23,10 @@ export class CreateCouponDto {
   @IsPositive()
   minSessions: number;
 
+  @IsInt()
+  @IsPositive()
+  bonusSessions: number;
+
   @IsDateString()
   expiresAt: string;
 }
