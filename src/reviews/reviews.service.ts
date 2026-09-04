@@ -32,33 +32,28 @@ export class ReviewsService {
       throw new BadRequestException('Only clients can write reviews');
     }
 
-    const target = await this.prisma.user.findUnique({
-      where: { id: createReviewDto.targetUserId },
+    const purchase = await this.prisma.coursePurchase.findUnique({
+      where: { id: createReviewDto.purchaseId },
+      include: { course: true, review: true },
     });
-    if (!target) {
-      throw new NotFoundException('Target user not found');
+    if (!purchase) {
+      throw new NotFoundException('Course purchase not found');
     }
-    if (target.type !== UserType.Trainer) {
-      throw new BadRequestException('Reviews can only be written for trainers');
+    if (purchase.clientId !== reviewerId) {
+      throw new ForbiddenException(
+        'Only the client who made this purchase can review it',
+      );
     }
-
-    const existingReview = await this.prisma.review.findFirst({
-      where: { reviewerId, targetUserId: createReviewDto.targetUserId },
-    });
-    if (existingReview) {
-      throw new BadRequestException('You have already reviewed this trainer');
+    if (purchase.review) {
+      throw new BadRequestException('This purchase has already been reviewed');
     }
 
     const completedWorkout = await this.prisma.workout.findFirst({
-      where: {
-        clientId: reviewerId,
-        trainerId: createReviewDto.targetUserId,
-        status: WorkoutStatus.Completed,
-      },
+      where: { purchaseId: purchase.id, status: WorkoutStatus.Completed },
     });
     if (!completedWorkout) {
       throw new BadRequestException(
-        'You can only review a trainer after completing at least one workout with them',
+        'You can only review a course after completing at least one workout',
       );
     }
 
@@ -67,12 +62,13 @@ export class ReviewsService {
         score: createReviewDto.score,
         comment: createReviewDto.comment,
         reviewerId,
-        targetUserId: createReviewDto.targetUserId,
+        targetUserId: purchase.course.trainerId,
+        purchaseId: purchase.id,
       },
     });
 
     await this.notificationsService.create({
-      userId: createReviewDto.targetUserId,
+      userId: purchase.course.trainerId,
       type: NotificationType.NewReview,
       title: 'You received a new review',
       body: `${reviewer.name ?? 'A client'} gave you a ${createReviewDto.score}-star review`,
