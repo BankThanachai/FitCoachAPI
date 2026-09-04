@@ -1,12 +1,18 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NotificationType, UserType } from '../../generated/prisma/client';
+import {
+  NotificationType,
+  UserType,
+  WorkoutStatus,
+} from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateReviewDto } from './dto/create-review.dto';
+import { ReplyReviewDto } from './dto/reply-review.dto';
 
 @Injectable()
 export class ReviewsService {
@@ -36,6 +42,26 @@ export class ReviewsService {
       throw new BadRequestException('Reviews can only be written for trainers');
     }
 
+    const existingReview = await this.prisma.review.findFirst({
+      where: { reviewerId, targetUserId: createReviewDto.targetUserId },
+    });
+    if (existingReview) {
+      throw new BadRequestException('You have already reviewed this trainer');
+    }
+
+    const completedWorkout = await this.prisma.workout.findFirst({
+      where: {
+        clientId: reviewerId,
+        trainerId: createReviewDto.targetUserId,
+        status: WorkoutStatus.Completed,
+      },
+    });
+    if (!completedWorkout) {
+      throw new BadRequestException(
+        'You can only review a trainer after completing at least one workout with them',
+      );
+    }
+
     const review = await this.prisma.review.create({
       data: {
         score: createReviewDto.score,
@@ -55,6 +81,26 @@ export class ReviewsService {
     });
 
     return review;
+  }
+
+  async reply(id: string, trainerId: string, replyReviewDto: ReplyReviewDto) {
+    const review = await this.prisma.review.findUnique({ where: { id } });
+    if (!review) {
+      throw new NotFoundException(`Review with id ${id} not found`);
+    }
+    if (review.targetUserId !== trainerId) {
+      throw new ForbiddenException(
+        'Only the trainer who received this review can reply to it',
+      );
+    }
+    if (review.reply) {
+      throw new BadRequestException('This review already has a reply');
+    }
+
+    return this.prisma.review.update({
+      where: { id },
+      data: { reply: replyReviewDto.reply, repliedAt: new Date() },
+    });
   }
 
   async findByUser(targetUserId: string) {

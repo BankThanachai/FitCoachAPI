@@ -161,14 +161,17 @@ model RefreshToken {
 }
 
 model Review {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   score        Int
   comment      String?
   reviewerId   String
-  reviewer     User     @relation("ReviewsWritten", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewer     User      @relation("ReviewsWritten", fields: [reviewerId], references: [id], onDelete: Cascade)
   targetUserId String
-  targetUser   User     @relation("ReviewsReceived", fields: [targetUserId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now())
+  targetUser   User      @relation("ReviewsReceived", fields: [targetUserId], references: [id], onDelete: Cascade)
+  reply        String?
+  repliedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([targetUserId])
   @@index([reviewerId])
