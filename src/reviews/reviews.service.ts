@@ -14,6 +14,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
 
+const VISIBLE_NAME_CHARS = 3;
+
+function maskName(name: string | null): string {
+  if (!name) {
+    return '***';
+  }
+  const visible = name.slice(0, VISIBLE_NAME_CHARS);
+  const masked = '*'.repeat(Math.max(name.length - VISIBLE_NAME_CHARS, 0));
+  return visible + masked;
+}
+
 @Injectable()
 export class ReviewsService {
   constructor(
@@ -110,6 +121,7 @@ export class ReviewsService {
     const [reviews, aggregate] = await Promise.all([
       this.prisma.review.findMany({
         where: { targetUserId },
+        include: { reviewer: { select: { name: true } } },
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.review.aggregate({
@@ -120,7 +132,10 @@ export class ReviewsService {
     ]);
 
     return {
-      reviews,
+      reviews: reviews.map(({ reviewer, ...review }) => ({
+        ...review,
+        reviewerName: maskName(reviewer.name),
+      })),
       averageScore: aggregate._avg.score
         ? Math.round(aggregate._avg.score * 100) / 100
         : 0,

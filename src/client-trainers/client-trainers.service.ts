@@ -13,6 +13,7 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
+import { roundScore } from '../shared/score.util';
 import { CreateClientTrainerDto } from './dto/create-client-trainer.dto';
 import { UpdateClientTrainerStatusDto } from './dto/update-client-trainer-status.dto';
 
@@ -152,17 +153,37 @@ export class ClientTrainersService {
     });
   }
 
-  /** Trainers this client has a relation with, each annotated with their latest course purchase when it still has remaining sessions. */
+  /** Trainers this client has a relation with, each annotated with their latest course purchase when it still has remaining sessions, their average review score, and their total accepted client count. */
   async findByClient(clientId: string) {
     const relations = await this.prisma.clientTrainer.findMany({
       where: { clientId },
       include: { trainer: { omit: { password: true } } },
       orderBy: { createdAt: 'desc' },
     });
+    const trainerIds = relations.map((relation) => relation.trainerId);
 
-    const latestPurchaseByTrainerId = await this.findLatestPurchasesByTrainer(
-      clientId,
-      relations.map((relation) => relation.trainerId),
+    const [latestPurchaseByTrainerId, scoresByTrainer, clientCountsByTrainer] =
+      await Promise.all([
+        this.findLatestPurchasesByTrainer(clientId, trainerIds),
+        this.prisma.review.groupBy({
+          by: ['targetUserId'],
+          where: { targetUserId: { in: trainerIds } },
+          _avg: { score: true },
+        }),
+        this.prisma.clientTrainer.groupBy({
+          by: ['trainerId'],
+          where: {
+            trainerId: { in: trainerIds },
+            status: ClientTrainerStatus.Accepted,
+          },
+          _count: true,
+        }),
+      ]);
+    const averageScoreByTrainerId = new Map(
+      scoresByTrainer.map((row) => [row.targetUserId, row._avg.score]),
+    );
+    const clientCountByTrainerId = new Map(
+      clientCountsByTrainer.map((row) => [row.trainerId, row._count]),
     );
 
     return relations.map((relation) => {
@@ -175,6 +196,10 @@ export class ClientTrainersService {
           latestPurchase && latestPurchase.remainingSessions > 0
             ? latestPurchase
             : null,
+        averageScore: roundScore(
+          averageScoreByTrainerId.get(relation.trainerId) ?? null,
+        ),
+        totalClients: clientCountByTrainerId.get(relation.trainerId) ?? 0,
       };
     });
   }

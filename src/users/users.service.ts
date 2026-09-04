@@ -13,6 +13,7 @@ import {
 } from '../../generated/prisma/client';
 import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { roundScore } from '../shared/score.util';
 import { WorkingHoursService } from '../working-hours/working-hours.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { SearchTrainerDto } from './dto/search-trainer.dto';
@@ -117,26 +118,49 @@ export class UsersService {
       this.prisma.user.count({ where }),
     ]);
 
-    const clientTrainerRelations = await this.prisma.clientTrainer.findMany({
-      where: {
-        clientId,
-        trainerId: { in: users.map((user) => user.id) },
-      },
-      select: { trainerId: true, status: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    const trainerIds = users.map((user) => user.id);
+
+    const [clientTrainerRelations, scoresByTrainer, clientCountsByTrainer] =
+      await Promise.all([
+        this.prisma.clientTrainer.findMany({
+          where: { clientId, trainerId: { in: trainerIds } },
+          select: { trainerId: true, status: true },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.review.groupBy({
+          by: ['targetUserId'],
+          where: { targetUserId: { in: trainerIds } },
+          _avg: { score: true },
+        }),
+        this.prisma.clientTrainer.groupBy({
+          by: ['trainerId'],
+          where: {
+            trainerId: { in: trainerIds },
+            status: ClientTrainerStatus.Accepted,
+          },
+          _count: true,
+        }),
+      ]);
     const statusByTrainerId = new Map<string, ClientTrainerStatus>();
     for (const relation of clientTrainerRelations) {
       if (!statusByTrainerId.has(relation.trainerId)) {
         statusByTrainerId.set(relation.trainerId, relation.status);
       }
     }
+    const averageScoreByTrainerId = new Map(
+      scoresByTrainer.map((row) => [row.targetUserId, row._avg.score]),
+    );
+    const clientCountByTrainerId = new Map(
+      clientCountsByTrainer.map((row) => [row.trainerId, row._count]),
+    );
 
     return {
       data: users.map((user) => ({
         ...excludePassword(user),
         isFriend: statusByTrainerId.has(user.id),
         clientTrainerStatus: statusByTrainerId.get(user.id) ?? null,
+        averageScore: roundScore(averageScoreByTrainerId.get(user.id) ?? null),
+        totalClients: clientCountByTrainerId.get(user.id) ?? 0,
       })),
       page,
       pageSize,
@@ -148,12 +172,27 @@ export class UsersService {
   async findOne(id: string) {
     const user = await this.ensureUserExists(id);
 
-    const workingHours =
-      user.type === UserType.Trainer
-        ? await this.workingHoursService.findByUser(id)
-        : [];
+    if (user.type !== UserType.Trainer) {
+      return { ...excludePassword(user), workingHours: [] };
+    }
 
-    return { ...excludePassword(user), workingHours };
+    const [workingHours, aggregate, totalClients] = await Promise.all([
+      this.workingHoursService.findByUser(id),
+      this.prisma.review.aggregate({
+        where: { targetUserId: id },
+        _avg: { score: true },
+      }),
+      this.prisma.clientTrainer.count({
+        where: { trainerId: id, status: ClientTrainerStatus.Accepted },
+      }),
+    ]);
+
+    return {
+      ...excludePassword(user),
+      workingHours,
+      averageScore: roundScore(aggregate._avg.score),
+      totalClients,
+    };
   }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
