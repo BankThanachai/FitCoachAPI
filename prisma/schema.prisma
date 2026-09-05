@@ -102,7 +102,9 @@ model User {
   phone                   String           @unique
   password                String
   name                    String?
-  age                     Int?
+  birthDate               DateTime?
+  weightKg                Decimal?         @db.Decimal(5, 2)
+  heightCm                Decimal?         @db.Decimal(5, 2)
   gender                  Gender
   province                String
   district                String

@@ -2,7 +2,8 @@ import { Type } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
-  IsInt,
+  IsISO8601,
+  IsNumber,
   IsOptional,
   IsPhoneNumber,
   IsString,
@@ -28,9 +29,18 @@ export class CreateUserDto {
   name?: string;
 
   @IsOptional()
-  @IsInt()
+  @IsISO8601()
+  birthDate?: string;
+
+  @IsOptional()
+  @IsNumber()
   @Min(0)
-  age?: number;
+  weightKg?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  heightCm?: number;
 
   @IsEnum(Gender)
   gender: Gender;

@@ -52,6 +52,9 @@ export class UsersService {
         const created = await tx.user.create({
           data: {
             ...userData,
+            birthDate: userData.birthDate
+              ? new Date(userData.birthDate)
+              : undefined,
             password: hashedPassword,
             bankAccounts: bankAccounts ? { create: bankAccounts } : undefined,
           },
@@ -200,12 +203,15 @@ export class UsersService {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { bankAccounts, ...userData } = updateUserDto;
-      const data = userData.password
-        ? {
-            ...userData,
-            password: await bcrypt.hash(userData.password, SALT_ROUNDS),
-          }
-        : userData;
+      const data = {
+        ...userData,
+        birthDate: userData.birthDate
+          ? new Date(userData.birthDate)
+          : undefined,
+        password: userData.password
+          ? await bcrypt.hash(userData.password, SALT_ROUNDS)
+          : undefined,
+      };
       const user = await this.prisma.user.update({
         where: { id },
         data,
