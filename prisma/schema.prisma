@@ -172,6 +172,7 @@ model Review {
   targetUser   User           @relation("ReviewsReceived", fields: [targetUserId], references: [id], onDelete: Cascade)
   purchaseId   String         @unique
   purchase     CoursePurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  isAnonymous  Boolean        @default(false)
   reply        String?
   repliedAt    DateTime?
   createdAt    DateTime       @default(now())

@@ -15,6 +15,7 @@ import { CreateReviewDto } from './dto/create-review.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
 
 const VISIBLE_NAME_CHARS = 3;
+const MIN_COMPLETION_RATIO = 0.5;
 
 function maskName(name: string | null): string {
   if (!name) {
@@ -59,12 +60,15 @@ export class ReviewsService {
       throw new BadRequestException('This purchase has already been reviewed');
     }
 
-    const completedWorkout = await this.prisma.workout.findFirst({
+    const completedCount = await this.prisma.workout.count({
       where: { purchaseId: purchase.id, status: WorkoutStatus.Completed },
     });
-    if (!completedWorkout) {
+    const minCompleted = Math.ceil(
+      purchase.course.sessions * MIN_COMPLETION_RATIO,
+    );
+    if (completedCount < minCompleted) {
       throw new BadRequestException(
-        'You can only review a course after completing at least one workout',
+        `You can only review a course after completing at least ${minCompleted} of ${purchase.course.sessions} sessions (${MIN_COMPLETION_RATIO * 100}%)`,
       );
     }
 
@@ -75,6 +79,7 @@ export class ReviewsService {
         reviewerId,
         targetUserId: purchase.course.trainerId,
         purchaseId: purchase.id,
+        isAnonymous: createReviewDto.isAnonymous ?? false,
       },
     });
 
@@ -134,7 +139,9 @@ export class ReviewsService {
     return {
       reviews: reviews.map(({ reviewer, ...review }) => ({
         ...review,
-        reviewerName: maskName(reviewer.name),
+        reviewerName: review.isAnonymous
+          ? maskName(reviewer.name)
+          : (reviewer.name ?? null),
       })),
       averageScore: aggregate._avg.score
         ? Math.round(aggregate._avg.score * 100) / 100

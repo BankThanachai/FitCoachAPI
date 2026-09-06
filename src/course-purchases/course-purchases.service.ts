@@ -155,7 +155,11 @@ export class CoursePurchasesService {
   async findMyPurchasesUnderTrainer(clientId: string, trainerId?: string) {
     const purchases = await this.prisma.coursePurchase.findMany({
       where: { clientId, course: trainerId ? { trainerId } : undefined },
-      include: { course: true, _count: { select: { coupons: true } } },
+      include: {
+        course: true,
+        review: { select: { id: true } },
+        _count: { select: { coupons: true } },
+      },
       orderBy: { purchasedAt: 'desc' },
     });
 
@@ -164,13 +168,14 @@ export class CoursePurchasesService {
         purchases.map((p) => p.id),
       );
 
-    return purchases.map(({ _count, ...purchase }) => {
+    return purchases.map(({ _count, review, ...purchase }) => {
       const sessions = sessionsByPurchase.get(purchase.id);
       return {
         ...purchase,
         remainingSessions: sessions?.remainingSessions ?? 0,
         usedSessions: sessions?.usedSessions ?? 0,
         couponsUsed: _count.coupons,
+        hasReview: !!review,
       };
     });
   }
