@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -108,6 +109,7 @@ export class UsersService {
       province: searchTrainerDto.province,
       district: searchTrainerDto.district,
       subDistrict: searchTrainerDto.subDistrict,
+      acceptsPartnerWork: searchTrainerDto.acceptsPartnerWork,
     };
 
     const [users, total] = await Promise.all([
@@ -199,7 +201,15 @@ export class UsersService {
   }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
-    await this.ensureUserExists(id);
+    const existing = await this.ensureUserExists(id);
+    if (
+      updateUserDto.acceptsPartnerWork !== undefined &&
+      existing.type !== UserType.Trainer
+    ) {
+      throw new BadRequestException(
+        'Only trainers can toggle acceptsPartnerWork',
+      );
+    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { bankAccounts, ...userData } = updateUserDto;

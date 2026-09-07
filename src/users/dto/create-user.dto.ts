@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsISO8601,
@@ -41,6 +42,10 @@ export class CreateUserDto {
   @IsNumber()
   @Min(0)
   heightCm?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptsPartnerWork?: boolean;
 
   @IsEnum(Gender)
   gender: Gender;

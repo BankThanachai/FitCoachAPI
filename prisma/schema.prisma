@@ -112,6 +112,7 @@ model User {
   postalCode              String
   type                    UserType
   rating                  Float            @default(0)
+  acceptsPartnerWork      Boolean          @default(false)
   createdAt               DateTime         @default(now())
   updatedAt               DateTime         @updatedAt
   refreshTokens           RefreshToken[]
