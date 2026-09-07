@@ -45,7 +45,13 @@ function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000);
 }
 
-function serialize(workout: Workout) {
+const WORKOUT_INCLUDE = {
+  trainer: { select: { id: true, name: true } },
+  client: { select: { id: true, name: true } },
+  exercises: { include: { sets: true } },
+} as const;
+
+function serialize<T extends Workout>(workout: T) {
   return {
     ...workout,
     date: workout.date.toISOString().slice(0, 10),
@@ -151,7 +157,7 @@ export class WorkoutsService {
 
   async findAll() {
     const workouts = await this.prisma.workout.findMany({
-      include: { exercises: { include: { sets: true } } },
+      include: WORKOUT_INCLUDE,
       orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
     });
     return workouts.map(serialize);
@@ -160,7 +166,7 @@ export class WorkoutsService {
   async findByClient(clientId: string) {
     const workouts = await this.prisma.workout.findMany({
       where: { clientId },
-      include: { exercises: { include: { sets: true } } },
+      include: WORKOUT_INCLUDE,
       orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
     });
     return workouts.map(serialize);
@@ -169,7 +175,7 @@ export class WorkoutsService {
   async findByTrainer(trainerId: string) {
     const workouts = await this.prisma.workout.findMany({
       where: { trainerId },
-      include: { exercises: { include: { sets: true } } },
+      include: WORKOUT_INCLUDE,
       orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
     });
     return workouts.map(serialize);
@@ -195,7 +201,7 @@ export class WorkoutsService {
 
     const workouts = await this.prisma.workout.findMany({
       where: { trainerId, clientId },
-      include: { exercises: { include: { sets: true } } },
+      include: WORKOUT_INCLUDE,
       orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
     });
     return workouts.map(serialize);
@@ -204,7 +210,7 @@ export class WorkoutsService {
   async findOne(id: string) {
     const workout = await this.prisma.workout.findUnique({
       where: { id },
-      include: { exercises: { include: { sets: true } } },
+      include: WORKOUT_INCLUDE,
     });
     if (!workout) {
       throw new NotFoundException(`Workout with id ${id} not found`);
