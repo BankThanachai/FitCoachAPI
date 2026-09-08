@@ -13,6 +13,7 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateWorkoutDto } from './dto/create-workout.dto';
+import { FindClientWorkoutsDto } from './dto/find-client-workouts.dto';
 import { GetAvailabilityDto } from './dto/get-availability.dto';
 import { GetAvailabilityMonthDto } from './dto/get-availability-month.dto';
 import { UpdateWorkoutDto } from './dto/update-workout.dto';
@@ -34,8 +35,19 @@ export class WorkoutsController {
   }
 
   @Get('client')
-  findByClient(@Req() request: Request & { user: JwtPayload }) {
-    return this.workoutsService.findByClient(request.user.sub);
+  findByClient(
+    @Req() request: Request & { user: JwtPayload },
+    @Query() query: FindClientWorkoutsDto,
+  ) {
+    return this.workoutsService.findByClient(
+      request.user.sub,
+      query.page ?? 1,
+      query.pageSize ?? 20,
+      query.purchaseId,
+      query.date,
+      query.sortOrder,
+      query.dateFrom,
+    );
   }
 
   @Get('trainer')

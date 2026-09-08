@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, UserType } from '../../generated/prisma/client';
+import { Prisma, UserType, WorkoutStatus } from '../../generated/prisma/client';
 import { ClientTrainersService } from '../client-trainers/client-trainers.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -163,10 +163,22 @@ export class CoursePurchasesService {
       orderBy: { purchasedAt: 'desc' },
     });
 
-    const sessionsByPurchase =
-      await this.coursePurchaseCalculationsService.computeRemainingSessions(
+    const [sessionsByPurchase, completedCounts] = await Promise.all([
+      this.coursePurchaseCalculationsService.computeRemainingSessions(
         purchases.map((p) => p.id),
-      );
+      ),
+      this.prisma.workout.groupBy({
+        by: ['purchaseId'],
+        where: {
+          purchaseId: { in: purchases.map((p) => p.id) },
+          status: WorkoutStatus.Completed,
+        },
+        _count: true,
+      }),
+    ]);
+    const completedByPurchaseId = new Map(
+      completedCounts.map((row) => [row.purchaseId, row._count]),
+    );
 
     return purchases.map(({ _count, review, ...purchase }) => {
       const sessions = sessionsByPurchase.get(purchase.id);
@@ -174,6 +186,14 @@ export class CoursePurchasesService {
         ...purchase,
         remainingSessions: sessions?.remainingSessions ?? 0,
         usedSessions: sessions?.usedSessions ?? 0,
+        // Sessions with status Completed only — distinct from usedSessions,
+        // which also counts Cancelled ones (a booking still consumes the
+        // purchase's quota even if cancelled). This is what actually gates
+        // review eligibility and "เทรนสำเร็จแล้ว X ครั้ง" displays; computed
+        // here instead of by the client so it stays correct once
+        // GET /workouts/client is paginated and no longer returns every
+        // workout in one response.
+        completedSessions: completedByPurchaseId.get(purchase.id) ?? 0,
         couponsUsed: _count.coupons,
         hasReview: !!review,
       };

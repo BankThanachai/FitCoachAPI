@@ -9,6 +9,7 @@ import {
   ClientTrainerStatus,
   DayOfWeek,
   NotificationType,
+  Prisma,
   UserType,
   WorkingHourStatus,
   Workout,
@@ -17,6 +18,7 @@ import {
 import { CoursePurchasesService } from '../course-purchases/course-purchases.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { paginate } from '../shared/pagination.util';
 import { CreateWorkoutDto } from './dto/create-workout.dto';
 import { UpdateWorkoutDto } from './dto/update-workout.dto';
 
@@ -163,13 +165,35 @@ export class WorkoutsService {
     return workouts.map(serialize);
   }
 
-  async findByClient(clientId: string) {
-    const workouts = await this.prisma.workout.findMany({
-      where: { clientId },
-      include: WORKOUT_INCLUDE,
-      orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
-    });
-    return workouts.map(serialize);
+  async findByClient(
+    clientId: string,
+    page: number,
+    pageSize: number,
+    purchaseId?: string,
+    date?: string,
+    sortOrder: 'asc' | 'desc' = 'desc',
+    dateFrom?: string,
+  ) {
+    const where: Prisma.WorkoutWhereInput = {
+      clientId,
+      purchaseId,
+      date: date
+        ? new Date(date)
+        : dateFrom
+          ? { gt: new Date(dateFrom) }
+          : undefined,
+    };
+    const [workouts, total] = await Promise.all([
+      this.prisma.workout.findMany({
+        where,
+        include: WORKOUT_INCLUDE,
+        orderBy: [{ date: sortOrder }, { fromTime: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.workout.count({ where }),
+    ]);
+    return paginate(workouts.map(serialize), page, pageSize, total);
   }
 
   async findByTrainer(trainerId: string) {

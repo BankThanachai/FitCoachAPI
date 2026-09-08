@@ -11,6 +11,7 @@ import {
   UserType,
 } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { paginate } from '../shared/pagination.util';
 import { CreateCouponDto } from './dto/create-coupon.dto';
 
 const PAGE_SIZE = 20;
@@ -66,24 +67,40 @@ export class CouponsService {
     });
   }
 
-  async findByClient(clientId: string, page: number) {
-    const [coupons, totalCoupons] = await Promise.all([
+  async findByClient(
+    clientId: string,
+    page: number,
+    status?: ('Active' | 'Used' | 'Expired')[],
+  ) {
+    const now = new Date();
+    const statusConditions: Prisma.CouponWhereInput[] = (status ?? []).map(
+      (s) => {
+        if (s === 'Active') return { usedAt: null, expiresAt: { gte: now } };
+        if (s === 'Used') return { usedAt: { not: null } };
+        return { usedAt: null, expiresAt: { lt: now } };
+      },
+    );
+    const where: Prisma.CouponWhereInput = {
+      clientId,
+      ...(statusConditions.length > 0 ? { OR: statusConditions } : {}),
+    };
+
+    const [coupons, total] = await Promise.all([
       this.prisma.coupon.findMany({
-        where: { clientId },
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * PAGE_SIZE,
         take: PAGE_SIZE,
       }),
-      this.prisma.coupon.count({ where: { clientId } }),
+      this.prisma.coupon.count({ where }),
     ]);
 
-    const now = new Date();
     const items = coupons.map((coupon) => ({
       ...coupon,
       status: this.resolveStatus(coupon, now),
     }));
 
-    return { coupons: items, page, pageSize: PAGE_SIZE, totalCoupons };
+    return paginate(items, page, PAGE_SIZE, total);
   }
 
   async hasUnusedTrialCoupon(clientId: string) {

@@ -7,6 +7,7 @@ import {
 import { NotificationType, UserType } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { paginate } from '../shared/pagination.util';
 import { CreateMessageDto } from './dto/create-message.dto';
 
 const PAGE_SIZE = 20;
@@ -104,11 +105,11 @@ export class MessagesService {
       where: { clientId_trainerId: { clientId, trainerId } },
     });
     if (!conversation) {
-      return { messages: [], page, pageSize: PAGE_SIZE, totalMessages: 0 };
+      return paginate([], page, PAGE_SIZE, 0);
     }
     this.ensureParticipant(requesterId, conversation);
 
-    const [messages, totalMessages] = await Promise.all([
+    const [messages, total] = await Promise.all([
       this.prisma.message.findMany({
         where: { conversationId: conversation.id },
         orderBy: { createdAt: 'desc' },
@@ -131,7 +132,7 @@ export class MessagesService {
       });
     }
 
-    return { messages, page, pageSize: PAGE_SIZE, totalMessages };
+    return paginate(messages, page, PAGE_SIZE, total);
   }
 
   async findConversationsForUser(userId: string, page: number) {
@@ -172,17 +173,10 @@ export class MessagesService {
         return bTime - aTime;
       });
 
-    const totalConversations = sorted.length;
     const totalUnread = sorted.reduce((sum, c) => sum + c.unreadCount, 0);
     const start = (page - 1) * PAGE_SIZE;
     const items = sorted.slice(start, start + PAGE_SIZE);
 
-    return {
-      conversations: items,
-      page,
-      pageSize: PAGE_SIZE,
-      totalConversations,
-      totalUnread,
-    };
+    return { ...paginate(items, page, PAGE_SIZE, sorted.length), totalUnread };
   }
 }

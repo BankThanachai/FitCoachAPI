@@ -14,6 +14,7 @@ import {
 } from '../../generated/prisma/client';
 import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { paginate } from '../shared/pagination.util';
 import { roundScore } from '../shared/score.util';
 import { WorkingHoursService } from '../working-hours/working-hours.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -159,8 +160,8 @@ export class UsersService {
       clientCountsByTrainer.map((row) => [row.trainerId, row._count]),
     );
 
-    return {
-      data: users.map((user) => ({
+    return paginate(
+      users.map((user) => ({
         ...excludePassword(user),
         isFriend: statusByTrainerId.has(user.id),
         clientTrainerStatus: statusByTrainerId.get(user.id) ?? null,
@@ -169,9 +170,8 @@ export class UsersService {
       })),
       page,
       pageSize,
-      totalPages: Math.ceil(total / pageSize),
       total,
-    };
+    );
   }
 
   async findOne(id: string) {

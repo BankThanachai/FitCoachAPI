@@ -9,6 +9,7 @@ import {
   UserType,
 } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { paginate } from '../shared/pagination.util';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { SearchPaymentDto } from './dto/search-payment.dto';
 
@@ -106,13 +107,7 @@ export class PaymentsService {
       this.prisma.payment.count({ where }),
     ]);
 
-    return {
-      data: payments,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
-      total,
-    };
+    return paginate(payments, page, pageSize, total);
   }
 
   async findOne(id: string) {

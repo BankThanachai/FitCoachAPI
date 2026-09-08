@@ -21,6 +21,10 @@ export class CouponsController {
     @Req() request: Request & { user: JwtPayload },
     @Query() query: ListCouponsDto,
   ) {
-    return this.couponsService.findByClient(request.user.sub, query.page ?? 1);
+    return this.couponsService.findByClient(
+      request.user.sub,
+      query.page ?? 1,
+      query.status,
+    );
   }
 }
