@@ -15,6 +15,7 @@ import {
 import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { paginate } from '../shared/pagination.util';
+import { R2Service } from '../shared/r2.service';
 import { roundScore } from '../shared/score.util';
 import { WorkingHoursService } from '../working-hours/working-hours.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -41,7 +42,18 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly workingHoursService: WorkingHoursService,
     private readonly couponsService: CouponsService,
+    private readonly r2Service: R2Service,
   ) {}
+
+  /** Adds a computed `profilePhotoUrl` alongside the raw `profilePhotoKey`, null when the user has no photo. */
+  private withPhotoUrl<T extends { profilePhotoKey: string | null }>(
+    user: T,
+  ): T & { profilePhotoUrl: string | null } {
+    return {
+      ...user,
+      profilePhotoUrl: this.r2Service.getPublicUrl(user.profilePhotoKey),
+    };
+  }
 
   async create(createUserDto: CreateUserDto) {
     try {
@@ -162,7 +174,7 @@ export class UsersService {
 
     return paginate(
       users.map((user) => ({
-        ...excludePassword(user),
+        ...this.withPhotoUrl(excludePassword(user)),
         isFriend: statusByTrainerId.has(user.id),
         clientTrainerStatus: statusByTrainerId.get(user.id) ?? null,
         averageScore: roundScore(averageScoreByTrainerId.get(user.id) ?? null),
@@ -178,7 +190,7 @@ export class UsersService {
     const user = await this.ensureUserExists(id);
 
     if (user.type !== UserType.Trainer) {
-      return { ...excludePassword(user), workingHours: [] };
+      return { ...this.withPhotoUrl(excludePassword(user)), workingHours: [] };
     }
 
     const [workingHours, aggregate, totalClients] = await Promise.all([
@@ -193,7 +205,7 @@ export class UsersService {
     ]);
 
     return {
-      ...excludePassword(user),
+      ...this.withPhotoUrl(excludePassword(user)),
       workingHours,
       averageScore: roundScore(aggregate._avg.score),
       totalClients,

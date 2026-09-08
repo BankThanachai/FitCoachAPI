@@ -8,16 +8,35 @@ import { NotificationType, UserType } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { paginate } from '../shared/pagination.util';
+import { R2Service } from '../shared/r2.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 
 const PAGE_SIZE = 20;
+
+const PARTICIPANT_SELECT = {
+  id: true,
+  name: true,
+  profilePhotoKey: true,
+} as const;
 
 @Injectable()
 export class MessagesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly r2Service: R2Service,
   ) {}
+
+  /** Swaps a participant's raw `profilePhotoKey` for a computed `profilePhotoUrl`, null when they have no photo. */
+  private withPhotoUrl<T extends { profilePhotoKey: string | null }>(
+    participant: T,
+  ) {
+    const { profilePhotoKey, ...rest } = participant;
+    return {
+      ...rest,
+      profilePhotoUrl: this.r2Service.getPublicUrl(profilePhotoKey),
+    };
+  }
 
   private async findOrCreateConversation(clientId: string, trainerId: string) {
     const client = await this.prisma.user.findUnique({
@@ -139,8 +158,8 @@ export class MessagesService {
     const conversations = await this.prisma.conversation.findMany({
       where: { OR: [{ clientId: userId }, { trainerId: userId }] },
       include: {
-        client: { select: { id: true, name: true } },
-        trainer: { select: { id: true, name: true } },
+        client: { select: PARTICIPANT_SELECT },
+        trainer: { select: PARTICIPANT_SELECT },
         messages: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
     });
@@ -161,8 +180,8 @@ export class MessagesService {
     const sorted = conversations
       .map((conversation) => ({
         id: conversation.id,
-        client: conversation.client,
-        trainer: conversation.trainer,
+        client: this.withPhotoUrl(conversation.client),
+        trainer: this.withPhotoUrl(conversation.trainer),
         createdAt: conversation.createdAt,
         lastMessage: conversation.messages[0] ?? null,
         unreadCount: unreadByConversationId.get(conversation.id) ?? 0,

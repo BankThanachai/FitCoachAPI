@@ -13,6 +13,7 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
+import { R2Service } from '../shared/r2.service';
 import { roundScore } from '../shared/score.util';
 import { CreateClientTrainerDto } from './dto/create-client-trainer.dto';
 import { UpdateClientTrainerStatusDto } from './dto/update-client-trainer-status.dto';
@@ -23,7 +24,18 @@ export class ClientTrainersService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly coursePurchaseCalculationsService: CoursePurchaseCalculationsService,
+    private readonly r2Service: R2Service,
   ) {}
+
+  /** Adds a computed `profilePhotoUrl` alongside the raw `profilePhotoKey`, null when the user has no photo. */
+  private withPhotoUrl<T extends { profilePhotoKey: string | null }>(
+    user: T,
+  ): T & { profilePhotoUrl: string | null } {
+    return {
+      ...user,
+      profilePhotoUrl: this.r2Service.getPublicUrl(user.profilePhotoKey),
+    };
+  }
 
   /** Client sends a request to add a trainer; starts out Pending until the trainer accepts. */
   async create(
@@ -192,6 +204,7 @@ export class ClientTrainersService {
       );
       return {
         ...relation,
+        trainer: this.withPhotoUrl(relation.trainer),
         latestPurchase:
           latestPurchase && latestPurchase.remainingSessions > 0
             ? latestPurchase
@@ -261,11 +274,15 @@ export class ClientTrainersService {
 
   /** Clients this trainer has a relation with (requests, accepted, and rejected). */
   async findByTrainer(trainerId: string) {
-    return this.prisma.clientTrainer.findMany({
+    const relations = await this.prisma.clientTrainer.findMany({
       where: { trainerId },
       include: { client: { omit: { password: true } } },
       orderBy: { createdAt: 'desc' },
     });
+    return relations.map((relation) => ({
+      ...relation,
+      client: this.withPhotoUrl(relation.client),
+    }));
   }
 
   /** Trainer accepts or rejects the client's latest request; notifies the client only on acceptance. */

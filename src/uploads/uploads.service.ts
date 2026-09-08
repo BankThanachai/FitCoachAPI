@@ -7,10 +7,10 @@ import {
 import { randomUUID } from 'crypto';
 import { UserType } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { R2Service } from '../shared/r2.service';
 import { ConfirmPortfolioPhotoDto } from './dto/confirm-portfolio-photo.dto';
 import { ConfirmProfilePhotoDto } from './dto/confirm-profile-photo.dto';
 import { PresignUploadDto } from './dto/presign-upload.dto';
-import { R2Service } from './r2.service';
 
 const MAX_PORTFOLIO_PHOTOS = 5;
 const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {

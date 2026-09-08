@@ -35,7 +35,10 @@ export class R2Service {
     });
   }
 
-  getPublicUrl(key: string) {
+  getPublicUrl(key: string): string;
+  getPublicUrl(key: string | null): string | null;
+  getPublicUrl(key: string | null) {
+    if (key === null) return null;
     return `${this.publicUrl}/${key}`;
   }
 }
