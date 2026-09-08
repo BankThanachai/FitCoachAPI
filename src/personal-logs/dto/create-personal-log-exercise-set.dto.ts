@@ -1,6 +1,6 @@
 import { IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 
-export class CreateExerciseSetDto {
+export class CreatePersonalLogExerciseSetDto {
   @IsInt()
   @Min(1)
   order: number;

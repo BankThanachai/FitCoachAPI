@@ -42,7 +42,6 @@ export class ExercisesService {
     const exercise = await this.prisma.exercise.create({
       data: {
         name: createExerciseDto.name,
-        muscleGroup: createExerciseDto.muscleGroup,
         note: createExerciseDto.note,
         assignedToId: createExerciseDto.assignedToId,
         createdById,

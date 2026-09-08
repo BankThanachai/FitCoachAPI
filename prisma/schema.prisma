@@ -23,13 +23,6 @@ enum UserType {
   Client
 }
 
-enum MuscleGroup {
-  Legs
-  Chest
-  Back
-  Core
-}
-
 enum ActivityStatus {
   Assigned
   Completed
@@ -137,6 +130,7 @@ model User {
   coupons                 Coupon[]
   coursePurchases         CoursePurchase[]
   payments                Payment[]
+  personalLogs            PersonalLog[]
 }
 
 model BankAccount {
@@ -186,7 +180,6 @@ model Review {
 model Exercise {
   id           String         @id @default(uuid())
   name         String
-  muscleGroup  MuscleGroup
   note         String?
   status       ActivityStatus @default(Assigned)
   assignedToId String
@@ -207,12 +200,47 @@ model Exercise {
 model ExerciseSet {
   id         String   @id @default(uuid())
   order      Int
-  weightKg   Decimal
+  weightKg   Decimal?
   reps       Int
   exerciseId String
   exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
 
   @@unique([exerciseId, order])
+}
+
+model PersonalLog {
+  id        String                @id @default(uuid())
+  clientId  String
+  client    User                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date      DateTime              @db.Date
+  note      String?
+  exercises PersonalLogExercise[]
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  @@index([clientId])
+}
+
+model PersonalLogExercise {
+  id            String                    @id @default(uuid())
+  name          String
+  personalLogId String
+  personalLog   PersonalLog               @relation(fields: [personalLogId], references: [id], onDelete: Cascade)
+  sets          PersonalLogExerciseSet[]
+  createdAt     DateTime                  @default(now())
+
+  @@index([personalLogId])
+}
+
+model PersonalLogExerciseSet {
+  id                    String               @id @default(uuid())
+  order                 Int
+  weightKg              Decimal?
+  reps                  Int
+  personalLogExerciseId String
+  personalLogExercise   PersonalLogExercise  @relation(fields: [personalLogExerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([personalLogExerciseId, order])
 }
 
 model Cardio {

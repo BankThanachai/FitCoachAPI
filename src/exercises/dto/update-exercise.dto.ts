@@ -1,14 +1,10 @@
 import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
-import { ActivityStatus, MuscleGroup } from '../../../generated/prisma/client';
+import { ActivityStatus } from '../../../generated/prisma/client';
 
 export class UpdateExerciseDto {
   @IsOptional()
   @IsString()
   name?: string;
-
-  @IsOptional()
-  @IsEnum(MuscleGroup)
-  muscleGroup?: MuscleGroup;
 
   @IsOptional()
   @IsString()
