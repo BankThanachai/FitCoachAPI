@@ -17,6 +17,7 @@ import { CouponsModule } from './coupons/coupons.module';
 import { CoursePurchasesModule } from './course-purchases/course-purchases.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PersonalLogsModule } from './personal-logs/personal-logs.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { PersonalLogsModule } from './personal-logs/personal-logs.module';
     CoursePurchasesModule,
     PaymentsModule,
     PersonalLogsModule,
+    UploadsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

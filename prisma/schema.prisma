@@ -106,6 +106,7 @@ model User {
   type                    UserType
   rating                  Float            @default(0)
   acceptsPartnerWork      Boolean          @default(false)
+  profilePhotoKey         String?
   createdAt               DateTime         @default(now())
   updatedAt               DateTime         @updatedAt
   refreshTokens           RefreshToken[]
@@ -131,6 +132,7 @@ model User {
   coursePurchases         CoursePurchase[]
   payments                Payment[]
   personalLogs            PersonalLog[]
+  portfolioPhotos         TrainerPortfolioPhoto[]
 }
 
 model BankAccount {
@@ -241,6 +243,18 @@ model PersonalLogExerciseSet {
   personalLogExercise   PersonalLogExercise  @relation(fields: [personalLogExerciseId], references: [id], onDelete: Cascade)
 
   @@unique([personalLogExerciseId, order])
+}
+
+model TrainerPortfolioPhoto {
+  id        String   @id @default(uuid())
+  trainerId String
+  trainer   User     @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+  key       String
+  order     Int
+  createdAt DateTime @default(now())
+
+  @@unique([trainerId, order])
+  @@index([trainerId])
 }
 
 model Cardio {
