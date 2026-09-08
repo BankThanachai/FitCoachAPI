@@ -38,10 +38,20 @@ export class UploadsService {
   }
 
   async confirmProfilePhoto(userId: string, dto: ConfirmProfilePhotoDto) {
+    const previous = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { profilePhotoKey: true },
+    });
+
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { profilePhotoKey: dto.key },
     });
+
+    if (previous?.profilePhotoKey && previous.profilePhotoKey !== dto.key) {
+      await this.r2Service.deleteObject(previous.profilePhotoKey);
+    }
+
     return {
       profilePhotoKey: user.profilePhotoKey,
       profilePhotoUrl: this.r2Service.getPublicUrl(dto.key),
@@ -78,6 +88,11 @@ export class UploadsService {
       create: { trainerId, key: dto.key, order: dto.order },
       update: { key: dto.key },
     });
+
+    if (existing && existing.key !== dto.key) {
+      await this.r2Service.deleteObject(existing.key);
+    }
+
     return { ...photo, url: this.r2Service.getPublicUrl(photo.key) };
   }
 
@@ -102,7 +117,11 @@ export class UploadsService {
     if (photo.trainerId !== trainerId) {
       throw new ForbiddenException('This portfolio photo does not belong to you');
     }
-    return this.prisma.trainerPortfolioPhoto.delete({ where: { id } });
+    const deleted = await this.prisma.trainerPortfolioPhoto.delete({
+      where: { id },
+    });
+    await this.r2Service.deleteObject(deleted.key);
+    return deleted;
   }
 
   private async ensureTrainer(userId: string) {

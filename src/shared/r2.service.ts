@@ -1,11 +1,16 @@
-import { Injectable } from '@nestjs/common';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const PRESIGNED_URL_EXPIRY_SECONDS = 300;
 
 @Injectable()
 export class R2Service {
+  private readonly logger = new Logger(R2Service.name);
   private readonly client: S3Client;
   private readonly bucket: string;
   private readonly publicUrl: string;
@@ -40,5 +45,21 @@ export class R2Service {
   getPublicUrl(key: string | null) {
     if (key === null) return null;
     return `${this.publicUrl}/${key}`;
+  }
+
+  /**
+   * Deletes an object from the bucket. Failures are logged and swallowed
+   * rather than thrown — losing an old, now-unreferenced file in storage is
+   * a cost/cleanup concern, not something that should fail the request that
+   * replaced or removed the record pointing to it.
+   */
+  async deleteObject(key: string) {
+    try {
+      await this.client.send(
+        new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to delete R2 object "${key}": ${error}`);
+    }
   }
 }
