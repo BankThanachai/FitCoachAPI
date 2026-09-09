@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateReviewDto } from './dto/create-review.dto';
+import { FindReviewsDto } from './dto/find-reviews.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
 import { ReviewsService } from './reviews.service';
 
@@ -37,7 +39,10 @@ export class ReviewsController {
   }
 
   @Get('user/:userId')
-  findByUser(@Param('userId') userId: string) {
-    return this.reviewsService.findByUser(userId);
+  findByUser(
+    @Param('userId') userId: string,
+    @Query() findReviewsDto: FindReviewsDto,
+  ) {
+    return this.reviewsService.findByUser(userId, findReviewsDto);
   }
 }

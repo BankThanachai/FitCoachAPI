@@ -11,7 +11,9 @@ import {
 } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { paginate } from '../shared/pagination.util';
 import { CreateReviewDto } from './dto/create-review.dto';
+import { FindReviewsDto } from './dto/find-reviews.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
 
 const VISIBLE_NAME_CHARS = 3;
@@ -115,7 +117,13 @@ export class ReviewsService {
     });
   }
 
-  async findByUser(targetUserId: string) {
+  /**
+   * `averageScore`/`totalReviews` are always computed over every review
+   * this user has (via a separate aggregate query), regardless of which
+   * page of `reviews` was requested — the summary card shouldn't change
+   * depending on how far the client has scrolled.
+   */
+  async findByUser(targetUserId: string, findReviewsDto: FindReviewsDto) {
     const target = await this.prisma.user.findUnique({
       where: { id: targetUserId },
     });
@@ -123,30 +131,56 @@ export class ReviewsService {
       throw new NotFoundException(`User with id ${targetUserId} not found`);
     }
 
-    const [reviews, aggregate] = await Promise.all([
+    const page = findReviewsDto.page ?? 1;
+    const pageSize = findReviewsDto.pageSize ?? 20;
+
+    const [reviews, total, aggregate, scoreCounts] = await Promise.all([
       this.prisma.review.findMany({
         where: { targetUserId },
         include: { reviewer: { select: { name: true } } },
         orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       }),
+      this.prisma.review.count({ where: { targetUserId } }),
       this.prisma.review.aggregate({
         where: { targetUserId },
         _avg: { score: true },
         _count: true,
       }),
+      this.prisma.review.groupBy({
+        by: ['score'],
+        where: { targetUserId },
+        _count: true,
+      }),
     ]);
 
+    const countByScore: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const row of scoreCounts) {
+      countByScore[row.score] = row._count;
+    }
+
     return {
-      reviews: reviews.map(({ reviewer, ...review }) => ({
-        ...review,
-        reviewerName: review.isAnonymous
-          ? maskName(reviewer.name)
-          : (reviewer.name ?? null),
-      })),
+      reviews: paginate(
+        reviews.map(({ reviewer, ...review }) => ({
+          ...review,
+          reviewerName: review.isAnonymous
+            ? maskName(reviewer.name)
+            : (reviewer.name ?? null),
+        })),
+        page,
+        pageSize,
+        total,
+      ),
       averageScore: aggregate._avg.score
         ? Math.round(aggregate._avg.score * 100) / 100
         : 0,
       totalReviews: aggregate._count,
+      // Total reviews at each star level (1-5), computed over every review
+      // this user has — same "not affected by pagination" rule as
+      // averageScore/totalReviews above. Powers the rating-breakdown bars
+      // on TrainerReviewsScreen.
+      countByScore,
     };
   }
 }
