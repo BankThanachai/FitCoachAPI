@@ -12,7 +12,11 @@ import { Gender } from '../../../generated/prisma/client';
 export class SearchTrainerDto {
   @IsOptional()
   @IsString()
-  name?: string;
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  lastName?: string;
 
   @IsOptional()
   @IsEnum(Gender)

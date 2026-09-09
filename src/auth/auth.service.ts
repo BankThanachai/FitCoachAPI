@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
@@ -17,11 +17,17 @@ export class AuthService {
   ) {}
 
   async login(loginDto: LoginDto) {
+    if (!loginDto.phone && !loginDto.email) {
+      throw new BadRequestException('Either phone or email is required');
+    }
+
     const user = await this.prisma.user.findUnique({
-      where: { phone: loginDto.phone },
+      where: loginDto.email
+        ? { email: loginDto.email }
+        : { phone: loginDto.phone },
     });
     if (!user) {
-      throw new UnauthorizedException('Invalid phone or password');
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     const passwordMatches = await bcrypt.compare(
@@ -29,7 +35,7 @@ export class AuthService {
       user.password,
     );
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid phone or password');
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     if (loginDto.fcmToken) {

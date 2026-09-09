@@ -14,6 +14,7 @@ import {
 } from '../../generated/prisma/client';
 import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { withFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
 import { R2Service } from '../shared/r2.service';
 import { roundScore } from '../shared/score.util';
@@ -45,14 +46,14 @@ export class UsersService {
     private readonly r2Service: R2Service,
   ) {}
 
-  /** Adds a computed `profilePhotoUrl` alongside the raw `profilePhotoKey`, null when the user has no photo. */
-  private withPhotoUrl<T extends { profilePhotoKey: string | null }>(
-    user: T,
-  ): T & { profilePhotoUrl: string | null } {
-    return {
+  /** Adds computed `profilePhotoUrl` and `name` (firstName + lastName) fields to a user. */
+  private withComputedFields<
+    T extends { profilePhotoKey: string | null; firstName: string | null; lastName: string | null },
+  >(user: T) {
+    return withFullName({
       ...user,
       profilePhotoUrl: this.r2Service.getPublicUrl(user.profilePhotoKey),
-    };
+    });
   }
 
   async create(createUserDto: CreateUserDto) {
@@ -97,7 +98,7 @@ export class UsersService {
         await this.workingHoursService.create(user.id, {});
       }
 
-      return excludePassword(user);
+      return this.withComputedFields(excludePassword(user));
     } catch (error) {
       throw this.handlePrismaError(error);
     }
@@ -107,7 +108,7 @@ export class UsersService {
     const users = await this.prisma.user.findMany({
       include: { bankAccounts: true },
     });
-    return users.map(excludePassword);
+    return users.map((user) => this.withComputedFields(excludePassword(user)));
   }
 
   async searchTrainers(clientId: string, searchTrainerDto: SearchTrainerDto) {
@@ -115,8 +116,11 @@ export class UsersService {
     const pageSize = searchTrainerDto.pageSize ?? 20;
     const where: Prisma.UserWhereInput = {
       type: UserType.Trainer,
-      name: searchTrainerDto.name
-        ? { contains: searchTrainerDto.name, mode: 'insensitive' }
+      firstName: searchTrainerDto.firstName
+        ? { contains: searchTrainerDto.firstName, mode: 'insensitive' }
+        : undefined,
+      lastName: searchTrainerDto.lastName
+        ? { contains: searchTrainerDto.lastName, mode: 'insensitive' }
         : undefined,
       gender: searchTrainerDto.gender,
       province: searchTrainerDto.province,
@@ -129,7 +133,7 @@ export class UsersService {
       this.prisma.user.findMany({
         where,
         include: { bankAccounts: true },
-        orderBy: [{ rating: 'desc' }, { name: 'asc' }],
+        orderBy: [{ rating: 'desc' }, { firstName: 'asc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
@@ -174,7 +178,7 @@ export class UsersService {
 
     return paginate(
       users.map((user) => ({
-        ...this.withPhotoUrl(excludePassword(user)),
+        ...this.withComputedFields(excludePassword(user)),
         isFriend: statusByTrainerId.has(user.id),
         clientTrainerStatus: statusByTrainerId.get(user.id) ?? null,
         averageScore: roundScore(averageScoreByTrainerId.get(user.id) ?? null),
@@ -190,7 +194,7 @@ export class UsersService {
     const user = await this.ensureUserExists(id);
 
     if (user.type !== UserType.Trainer) {
-      return { ...this.withPhotoUrl(excludePassword(user)), workingHours: [] };
+      return { ...this.withComputedFields(excludePassword(user)), workingHours: [] };
     }
 
     const [workingHours, aggregate, totalClients] = await Promise.all([
@@ -205,7 +209,7 @@ export class UsersService {
     ]);
 
     return {
-      ...this.withPhotoUrl(excludePassword(user)),
+      ...this.withComputedFields(excludePassword(user)),
       workingHours,
       averageScore: roundScore(aggregate._avg.score),
       totalClients,
@@ -239,7 +243,7 @@ export class UsersService {
         data,
         include: { bankAccounts: true },
       });
-      return excludePassword(user);
+      return this.withComputedFields(excludePassword(user));
     } catch (error) {
       throw this.handlePrismaError(error);
     }
@@ -251,7 +255,7 @@ export class UsersService {
       where: { id },
       include: { bankAccounts: true },
     });
-    return excludePassword(user);
+    return this.withComputedFields(excludePassword(user));
   }
 
   private async ensureUserExists(id: string) {

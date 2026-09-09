@@ -18,6 +18,7 @@ import {
 import { CoursePurchasesService } from '../course-purchases/course-purchases.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeFullName, withFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
 import { CreateWorkoutDto } from './dto/create-workout.dto';
 import { UpdateWorkoutDto } from './dto/update-workout.dto';
@@ -48,14 +49,22 @@ function addMinutes(date: Date, minutes: number): Date {
 }
 
 const WORKOUT_INCLUDE = {
-  trainer: { select: { id: true, name: true } },
-  client: { select: { id: true, name: true } },
+  trainer: { select: { id: true, firstName: true, lastName: true } },
+  client: { select: { id: true, firstName: true, lastName: true } },
   exercises: { include: { sets: true } },
 } as const;
 
-function serialize<T extends Workout>(workout: T) {
+function serialize<
+  T extends Workout & {
+    trainer?: { firstName: string | null; lastName: string | null };
+    client?: { firstName: string | null; lastName: string | null };
+  },
+>(workout: T) {
+  const { trainer, client, ...rest } = workout;
   return {
-    ...workout,
+    ...rest,
+    ...(trainer ? { trainer: withFullName(trainer) } : {}),
+    ...(client ? { client: withFullName(client) } : {}),
     date: workout.date.toISOString().slice(0, 10),
     fromTime: dateToTimeString(workout.fromTime),
     toTime: dateToTimeString(workout.toTime),
@@ -149,7 +158,7 @@ export class WorkoutsService {
       userId: createWorkoutDto.trainerId,
       type: NotificationType.WorkoutBooked,
       title: 'New workout booked',
-      body: `${client.name ?? 'A client'} booked a workout on ${createWorkoutDto.date}`,
+      body: `${computeFullName(client.firstName, client.lastName) ?? 'A client'} booked a workout on ${createWorkoutDto.date}`,
       entityType: 'Workout',
       entityId: workout.id,
     });

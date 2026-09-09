@@ -11,6 +11,7 @@ import {
 } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { FindReviewsDto } from './dto/find-reviews.dto';
@@ -89,7 +90,7 @@ export class ReviewsService {
       userId: purchase.course.trainerId,
       type: NotificationType.NewReview,
       title: 'You received a new review',
-      body: `${reviewer.name ?? 'A client'} gave you a ${createReviewDto.score}-star review`,
+      body: `${computeFullName(reviewer.firstName, reviewer.lastName) ?? 'A client'} gave you a ${createReviewDto.score}-star review`,
       entityType: 'Review',
       entityId: review.id,
     });
@@ -137,7 +138,7 @@ export class ReviewsService {
     const [reviews, total, aggregate, scoreCounts] = await Promise.all([
       this.prisma.review.findMany({
         where: { targetUserId },
-        include: { reviewer: { select: { name: true } } },
+        include: { reviewer: { select: { firstName: true, lastName: true } } },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -162,12 +163,18 @@ export class ReviewsService {
 
     return {
       reviews: paginate(
-        reviews.map(({ reviewer, ...review }) => ({
-          ...review,
-          reviewerName: review.isAnonymous
-            ? maskName(reviewer.name)
-            : (reviewer.name ?? null),
-        })),
+        reviews.map(({ reviewer, ...review }) => {
+          const reviewerFullName = computeFullName(
+            reviewer.firstName,
+            reviewer.lastName,
+          );
+          return {
+            ...review,
+            reviewerName: review.isAnonymous
+              ? maskName(reviewerFullName)
+              : reviewerFullName,
+          };
+        }),
         page,
         pageSize,
         total,

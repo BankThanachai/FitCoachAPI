@@ -7,6 +7,7 @@ import {
 import { NotificationType, UserType } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeFullName, withFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
 import { R2Service } from '../shared/r2.service';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -15,7 +16,8 @@ const PAGE_SIZE = 20;
 
 const PARTICIPANT_SELECT = {
   id: true,
-  name: true,
+  firstName: true,
+  lastName: true,
   profilePhotoKey: true,
 } as const;
 
@@ -27,15 +29,15 @@ export class MessagesService {
     private readonly r2Service: R2Service,
   ) {}
 
-  /** Swaps a participant's raw `profilePhotoKey` for a computed `profilePhotoUrl`, null when they have no photo. */
-  private withPhotoUrl<T extends { profilePhotoKey: string | null }>(
-    participant: T,
-  ) {
+  /** Swaps a participant's raw `profilePhotoKey` for a computed `profilePhotoUrl`, and adds a computed `name`. */
+  private withComputedFields<
+    T extends { profilePhotoKey: string | null; firstName: string | null; lastName: string | null },
+  >(participant: T) {
     const { profilePhotoKey, ...rest } = participant;
-    return {
+    return withFullName({
       ...rest,
       profilePhotoUrl: this.r2Service.getPublicUrl(profilePhotoKey),
-    };
+    });
   }
 
   private async findOrCreateConversation(clientId: string, trainerId: string) {
@@ -106,7 +108,7 @@ export class MessagesService {
       userId: recipientId,
       type: NotificationType.NewMessage,
       title: 'New message',
-      body: `${sender?.name ?? 'Someone'}: ${createMessageDto.content}`,
+      body: `${(sender && computeFullName(sender.firstName, sender.lastName)) ?? 'Someone'}: ${createMessageDto.content}`,
       entityType: 'Conversation',
       entityId: conversation.id,
     });
@@ -180,8 +182,8 @@ export class MessagesService {
     const sorted = conversations
       .map((conversation) => ({
         id: conversation.id,
-        client: this.withPhotoUrl(conversation.client),
-        trainer: this.withPhotoUrl(conversation.trainer),
+        client: this.withComputedFields(conversation.client),
+        trainer: this.withComputedFields(conversation.trainer),
         createdAt: conversation.createdAt,
         lastMessage: conversation.messages[0] ?? null,
         unreadCount: unreadByConversationId.get(conversation.id) ?? 0,

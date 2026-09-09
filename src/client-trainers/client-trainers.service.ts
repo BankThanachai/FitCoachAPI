@@ -13,6 +13,7 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
+import { computeFullName, withFullName } from '../shared/name.util';
 import { R2Service } from '../shared/r2.service';
 import { roundScore } from '../shared/score.util';
 import { CreateClientTrainerDto } from './dto/create-client-trainer.dto';
@@ -27,14 +28,14 @@ export class ClientTrainersService {
     private readonly r2Service: R2Service,
   ) {}
 
-  /** Adds a computed `profilePhotoUrl` alongside the raw `profilePhotoKey`, null when the user has no photo. */
-  private withPhotoUrl<T extends { profilePhotoKey: string | null }>(
-    user: T,
-  ): T & { profilePhotoUrl: string | null } {
-    return {
+  /** Adds computed `profilePhotoUrl` and `name` (firstName + lastName) fields to a user. */
+  private withComputedFields<
+    T extends { profilePhotoKey: string | null; firstName: string | null; lastName: string | null },
+  >(user: T) {
+    return withFullName({
       ...user,
       profilePhotoUrl: this.r2Service.getPublicUrl(user.profilePhotoKey),
-    };
+    });
   }
 
   /** Client sends a request to add a trainer; starts out Pending until the trainer accepts. */
@@ -87,7 +88,7 @@ export class ClientTrainersService {
       userId: createClientTrainerDto.trainerId,
       type: NotificationType.ClientTrainerRequest,
       title: 'New client request',
-      body: `${client.name ?? 'A client'} wants to add you as their trainer`,
+      body: `${computeFullName(client.firstName, client.lastName) ?? 'A client'} wants to add you as their trainer`,
       entityType: 'ClientTrainer',
       entityId: relation.id,
     });
@@ -159,7 +160,7 @@ export class ClientTrainersService {
       userId: trainerId,
       type: NotificationType.ClientTrainerAccepted,
       title: 'New client joined',
-      body: `${client?.name ?? 'A client'} joined you and purchased a course`,
+      body: `${(client && computeFullName(client.firstName, client.lastName)) ?? 'A client'} joined you and purchased a course`,
       entityType: 'ClientTrainer',
       entityId: relationId,
     });
@@ -204,7 +205,7 @@ export class ClientTrainersService {
       );
       return {
         ...relation,
-        trainer: this.withPhotoUrl(relation.trainer),
+        trainer: this.withComputedFields(relation.trainer),
         latestPurchase:
           latestPurchase && latestPurchase.remainingSessions > 0
             ? latestPurchase
@@ -281,7 +282,7 @@ export class ClientTrainersService {
     });
     return relations.map((relation) => ({
       ...relation,
-      client: this.withPhotoUrl(relation.client),
+      client: this.withComputedFields(relation.client),
     }));
   }
 
@@ -309,7 +310,7 @@ export class ClientTrainersService {
         userId: clientId,
         type: NotificationType.ClientTrainerAccepted,
         title: 'Trainer request accepted',
-        body: `${trainer?.name ?? 'A trainer'} accepted your request`,
+        body: `${(trainer && computeFullName(trainer.firstName, trainer.lastName)) ?? 'A trainer'} accepted your request`,
         entityType: 'ClientTrainer',
         entityId: updated.id,
       });

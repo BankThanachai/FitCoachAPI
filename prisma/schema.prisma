@@ -94,7 +94,8 @@ model User {
   email                   String           @unique
   phone                   String           @unique
   password                String
-  name                    String?
+  firstName               String?
+  lastName                String?
   birthDate               DateTime?
   weightKg                Decimal?         @db.Decimal(5, 2)
   heightCm                Decimal?         @db.Decimal(5, 2)
