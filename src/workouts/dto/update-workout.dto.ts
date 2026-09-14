@@ -1,5 +1,4 @@
-import { IsDateString, IsEnum, IsOptional, Matches } from 'class-validator';
-import { WorkoutStatus } from '../../../generated/prisma/client';
+import { IsDateString, IsOptional, Matches } from 'class-validator';
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -15,8 +14,4 @@ export class UpdateWorkoutDto {
   @IsOptional()
   @Matches(TIME_PATTERN, { message: 'toTime must be in HH:mm format' })
   toTime?: string;
-
-  @IsOptional()
-  @IsEnum(WorkoutStatus)
-  status?: WorkoutStatus;
 }

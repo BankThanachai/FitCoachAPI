@@ -156,9 +156,9 @@ export class WorkoutsService {
 
     await this.notificationsService.create({
       userId: createWorkoutDto.trainerId,
-      type: NotificationType.WorkoutBooked,
+      type: NotificationType.Workout,
       title: 'New workout booked',
-      body: `${computeFullName(client.firstName, client.lastName) ?? 'A client'} booked a workout on ${createWorkoutDto.date}`,
+      body: `${computeFullName(client.firstName, client.lastName) ?? 'A client'} booked a workout on ${createWorkoutDto.date} ${createWorkoutDto.fromTime} - ${createWorkoutDto.toTime}`,
       entityType: 'Workout',
       entityId: workout.id,
     });
@@ -205,13 +205,45 @@ export class WorkoutsService {
     return paginate(workouts.map(serialize), page, pageSize, total);
   }
 
-  async findByTrainer(trainerId: string) {
-    const workouts = await this.prisma.workout.findMany({
-      where: { trainerId },
-      include: WORKOUT_INCLUDE,
-      orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
-    });
-    return workouts.map(serialize);
+  async findByTrainer(
+    trainerId: string,
+    page: number,
+    pageSize: number,
+    date?: string,
+    dateFrom?: string,
+    dateTo?: string,
+    clientName?: string,
+  ) {
+    const where: Prisma.WorkoutWhereInput = {
+      trainerId,
+      date: date
+        ? new Date(date)
+        : dateFrom || dateTo
+          ? {
+              gte: dateFrom ? new Date(dateFrom) : undefined,
+              lte: dateTo ? new Date(dateTo) : undefined,
+            }
+          : undefined,
+      client: clientName
+        ? {
+            OR: [
+              { firstName: { contains: clientName, mode: 'insensitive' } },
+              { lastName: { contains: clientName, mode: 'insensitive' } },
+            ],
+          }
+        : undefined,
+    };
+    const [workouts, total] = await Promise.all([
+      this.prisma.workout.findMany({
+        where,
+        include: WORKOUT_INCLUDE,
+        orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.workout.count({ where }),
+    ]);
+    return paginate(workouts.map(serialize), page, pageSize, total);
   }
 
   /**
@@ -252,50 +284,11 @@ export class WorkoutsService {
   }
 
   /**
-   * Client requests that a workout be marked done, moving it from
-   * Confirmed to PendingApproval so the trainer can approve it into
-   * Completed. Only the client on the workout may call this, and only
-   * from Confirmed.
+   * Trainer approves a client's booking request, moving it from
+   * PendingApproval to TrainerApproved. Only the trainer on the workout
+   * may call this, and only from PendingApproval.
    */
-  async requestCompletion(id: string, clientId: string) {
-    const workout = await this.prisma.workout.findUnique({ where: { id } });
-    if (!workout) {
-      throw new NotFoundException(`Workout with id ${id} not found`);
-    }
-    if (workout.clientId !== clientId) {
-      throw new ForbiddenException(
-        'Only the client on this workout can request completion',
-      );
-    }
-
-    const { count } = await this.prisma.workout.updateMany({
-      where: { id, status: WorkoutStatus.Confirmed },
-      data: { status: WorkoutStatus.PendingApproval },
-    });
-    if (count === 0) {
-      throw new BadRequestException(
-        'Only a confirmed workout can be marked as completed',
-      );
-    }
-
-    await this.notificationsService.create({
-      userId: workout.trainerId,
-      type: NotificationType.WorkoutPendingApproval,
-      title: 'Workout awaiting your approval',
-      body: `A workout on ${serialize(workout).date} was marked done and needs your approval`,
-      entityType: 'Workout',
-      entityId: workout.id,
-    });
-
-    return this.findOne(id);
-  }
-
-  /**
-   * Trainer approves a client's completion request, moving it from
-   * PendingApproval to Completed. Only the trainer on the workout may call
-   * this, and only from PendingApproval.
-   */
-  async approveCompletion(id: string, trainerId: string) {
+  async approveBooking(id: string, trainerId: string) {
     const workout = await this.prisma.workout.findUnique({ where: { id } });
     if (!workout) {
       throw new NotFoundException(`Workout with id ${id} not found`);
@@ -308,7 +301,7 @@ export class WorkoutsService {
 
     const { count } = await this.prisma.workout.updateMany({
       where: { id, status: WorkoutStatus.PendingApproval },
-      data: { status: WorkoutStatus.Completed },
+      data: { status: WorkoutStatus.TrainerApproved },
     });
     if (count === 0) {
       throw new BadRequestException(
@@ -316,21 +309,232 @@ export class WorkoutsService {
       );
     }
 
+    await this.notificationsService.create({
+      userId: workout.clientId,
+      type: NotificationType.Workout,
+      title: 'Workout confirmed',
+      body: `Your workout on ${serialize(workout).date} has been confirmed`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
     return this.findOne(id);
   }
 
+  /**
+   * Trainer rejects a client's booking request, moving it from
+   * PendingApproval to TrainerRejected — a dead end, distinct from
+   * Cancelled. A reason is required and stored on the workout so the
+   * client can see why. Only the trainer on the workout may call this,
+   * and only from PendingApproval.
+   */
+  async rejectBooking(id: string, trainerId: string, reason: string) {
+    const workout = await this.prisma.workout.findUnique({ where: { id } });
+    if (!workout) {
+      throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (workout.trainerId !== trainerId) {
+      throw new ForbiddenException(
+        'Only the trainer on this workout can reject it',
+      );
+    }
+
+    const { count } = await this.prisma.workout.updateMany({
+      where: { id, status: WorkoutStatus.PendingApproval },
+      data: { status: WorkoutStatus.TrainerRejected, rejectReason: reason },
+    });
+    if (count === 0) {
+      throw new BadRequestException(
+        'Only a workout pending approval can be rejected',
+      );
+    }
+
+    await this.notificationsService.create({
+      userId: workout.clientId,
+      type: NotificationType.Workout,
+      title: 'Workout request declined',
+      body: `Your workout request on ${serialize(workout).date} was declined by the trainer: ${reason}`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Trainer finishes training the client and submits the session for the
+   * client to review, moving it from TrainerApproved to TrainerSubmitted.
+   * Only the trainer on the workout may call this, and only from
+   * TrainerApproved.
+   */
+  async submitTraining(id: string, trainerId: string) {
+    const workout = await this.prisma.workout.findUnique({ where: { id } });
+    if (!workout) {
+      throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (workout.trainerId !== trainerId) {
+      throw new ForbiddenException(
+        'Only the trainer on this workout can submit it',
+      );
+    }
+
+    const { count } = await this.prisma.workout.updateMany({
+      where: { id, status: WorkoutStatus.TrainerApproved },
+      data: { status: WorkoutStatus.TrainerSubmitted },
+    });
+    if (count === 0) {
+      throw new BadRequestException(
+        'Only an approved workout can be submitted',
+      );
+    }
+
+    await this.notificationsService.create({
+      userId: workout.clientId,
+      type: NotificationType.Workout,
+      title: 'Workout awaiting your review',
+      body: `Your trainer submitted the workout on ${serialize(workout).date} — please review it`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Client approves the trainer's submitted session, moving it from
+   * TrainerSubmitted to Completed. Only the client on the workout may
+   * call this, and only from TrainerSubmitted.
+   */
+  async approveSubmission(id: string, clientId: string) {
+    const workout = await this.prisma.workout.findUnique({ where: { id } });
+    if (!workout) {
+      throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (workout.clientId !== clientId) {
+      throw new ForbiddenException(
+        'Only the client on this workout can approve it',
+      );
+    }
+
+    const { count } = await this.prisma.workout.updateMany({
+      where: { id, status: WorkoutStatus.TrainerSubmitted },
+      data: { status: WorkoutStatus.Completed },
+    });
+    if (count === 0) {
+      throw new BadRequestException('Only a submitted workout can be approved');
+    }
+
+    await this.notificationsService.create({
+      userId: workout.trainerId,
+      type: NotificationType.Workout,
+      title: 'Workout approved',
+      body: `The client approved the workout on ${serialize(workout).date}`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Client disputes the trainer's submitted session, moving it from
+   * TrainerSubmitted to ClientRejected — a dead end. A reason is required
+   * and stored on the workout. Only the client on the workout may call
+   * this, and only from TrainerSubmitted.
+   */
+  async rejectSubmission(id: string, clientId: string, reason: string) {
+    const workout = await this.prisma.workout.findUnique({ where: { id } });
+    if (!workout) {
+      throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (workout.clientId !== clientId) {
+      throw new ForbiddenException(
+        'Only the client on this workout can reject it',
+      );
+    }
+
+    const { count } = await this.prisma.workout.updateMany({
+      where: { id, status: WorkoutStatus.TrainerSubmitted },
+      data: { status: WorkoutStatus.ClientRejected, rejectReason: reason },
+    });
+    if (count === 0) {
+      throw new BadRequestException('Only a submitted workout can be rejected');
+    }
+
+    await this.notificationsService.create({
+      userId: workout.trainerId,
+      type: NotificationType.Workout,
+      title: 'Workout submission declined',
+      body: `The client declined the workout submission on ${serialize(workout).date}: ${reason}`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Either the client or the trainer on a workout cancels it, from any
+   * non-terminal status. Unlike the generic PATCH :id, this checks the
+   * caller is actually a party to the workout.
+   */
+  async cancelWorkout(id: string, userId: string, reason?: string) {
+    const workout = await this.prisma.workout.findUnique({ where: { id } });
+    if (!workout) {
+      throw new NotFoundException(`Workout with id ${id} not found`);
+    }
+    if (workout.clientId !== userId && workout.trainerId !== userId) {
+      throw new ForbiddenException(
+        'Only the client or trainer on this workout can cancel it',
+      );
+    }
+
+    const { count } = await this.prisma.workout.updateMany({
+      where: {
+        id,
+        status: {
+          in: [
+            WorkoutStatus.PendingApproval,
+            WorkoutStatus.TrainerApproved,
+            WorkoutStatus.TrainerSubmitted,
+          ],
+        },
+      },
+      data: { status: WorkoutStatus.Cancelled, rejectReason: reason },
+    });
+    if (count === 0) {
+      throw new BadRequestException(
+        'This workout is already finished and cannot be cancelled',
+      );
+    }
+
+    const otherPartyId =
+      workout.clientId === userId ? workout.trainerId : workout.clientId;
+    await this.notificationsService.create({
+      userId: otherPartyId,
+      type: NotificationType.Workout,
+      title: 'Workout cancelled',
+      body: reason
+        ? `The workout on ${serialize(workout).date} was cancelled: ${reason}`
+        : `The workout on ${serialize(workout).date} was cancelled`,
+      entityType: 'Workout',
+      entityId: workout.id,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Edits a workout's date/time. Status is not settable through this
+   * generic PATCH — every status transition goes through a dedicated
+   * endpoint (approveBooking/rejectBooking/submitTraining/
+   * approveSubmission/rejectSubmission/cancelWorkout) that checks the
+   * caller's role, which a bare PATCH can't express.
+   */
   async update(id: string, updateWorkoutDto: UpdateWorkoutDto) {
     const existing = await this.prisma.workout.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException(`Workout with id ${id} not found`);
-    }
-    if (
-      updateWorkoutDto.status === WorkoutStatus.PendingApproval ||
-      updateWorkoutDto.status === WorkoutStatus.Completed
-    ) {
-      throw new BadRequestException(
-        'Use the request-completion/approve endpoints to move a workout through PendingApproval and Completed',
-      );
     }
 
     const date = updateWorkoutDto.date
@@ -362,29 +566,8 @@ export class WorkoutsService {
 
     const workout = await this.prisma.workout.update({
       where: { id },
-      data: { date, fromTime, toTime, status: updateWorkoutDto.status },
+      data: { date, fromTime, toTime },
     });
-
-    if (
-      updateWorkoutDto.status &&
-      updateWorkoutDto.status !== existing.status &&
-      (updateWorkoutDto.status === WorkoutStatus.Confirmed ||
-        updateWorkoutDto.status === WorkoutStatus.Cancelled)
-    ) {
-      const isConfirmed = updateWorkoutDto.status === WorkoutStatus.Confirmed;
-      await this.notificationsService.create({
-        userId: workout.clientId,
-        type: isConfirmed
-          ? NotificationType.WorkoutConfirmed
-          : NotificationType.WorkoutCancelled,
-        title: isConfirmed ? 'Workout confirmed' : 'Workout cancelled',
-        body: isConfirmed
-          ? `Your workout on ${serialize(workout).date} has been confirmed`
-          : `Your workout on ${serialize(workout).date} has been cancelled`,
-        entityType: 'Workout',
-        entityId: workout.id,
-      });
-    }
 
     return serialize(workout);
   }
@@ -445,7 +628,9 @@ export class WorkoutsService {
       where: {
         trainerId,
         date,
-        status: { not: WorkoutStatus.Cancelled },
+        status: {
+          notIn: [WorkoutStatus.Cancelled, WorkoutStatus.TrainerRejected],
+        },
       },
       orderBy: { fromTime: 'asc' },
     });
@@ -472,7 +657,9 @@ export class WorkoutsService {
       where: {
         trainerId,
         date: { gte: monthStart, lte: monthEnd },
-        status: { not: WorkoutStatus.Cancelled },
+        status: {
+          notIn: [WorkoutStatus.Cancelled, WorkoutStatus.TrainerRejected],
+        },
       },
     });
 

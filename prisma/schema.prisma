@@ -44,11 +44,23 @@ enum WorkingHourStatus {
   Inactive
 }
 
+// PendingApproval -> TrainerApproved: trainer approves the client's
+// booking (WorkoutsService.approveBooking). PendingApproval ->
+// TrainerRejected: trainer declines it instead (rejectBooking), a dead
+// end. TrainerApproved -> TrainerSubmitted: trainer finishes training
+// and submits the session for the client to review (submitTraining).
+// TrainerSubmitted -> Completed: client approves the submission
+// (approveSubmission) — terminal. TrainerSubmitted -> ClientRejected:
+// client disputes it instead (rejectSubmission) — terminal. Cancelled is
+// reachable from any non-terminal status by either party
+// (cancelWorkout).
 enum WorkoutStatus {
-  Pending
-  Confirmed
   PendingApproval
+  TrainerApproved
+  TrainerRejected
+  TrainerSubmitted
   Completed
+  ClientRejected
   Cancelled
 }
 
@@ -59,10 +71,7 @@ enum ClientTrainerStatus {
 }
 
 enum NotificationType {
-  WorkoutBooked
-  WorkoutConfirmed
-  WorkoutCancelled
-  WorkoutPendingApproval
+  Workout
   ClientTrainerRequest
   ClientTrainerAccepted
   NewReview
@@ -90,43 +99,43 @@ enum PaymentMethod {
 }
 
 model User {
-  id                      String           @id @default(uuid())
-  email                   String           @unique
-  phone                   String           @unique
+  id                      String                  @id @default(uuid())
+  email                   String                  @unique
+  phone                   String                  @unique
   password                String
   firstName               String?
   lastName                String?
   birthDate               DateTime?
-  weightKg                Decimal?         @db.Decimal(5, 2)
-  heightCm                Decimal?         @db.Decimal(5, 2)
+  weightKg                Decimal?                @db.Decimal(5, 2)
+  heightCm                Decimal?                @db.Decimal(5, 2)
   gender                  Gender
   province                String
   district                String
   subDistrict             String
   postalCode              String
   type                    UserType
-  rating                  Float            @default(0)
-  acceptsPartnerWork      Boolean          @default(false)
+  rating                  Float                   @default(0)
+  acceptsPartnerWork      Boolean                 @default(false)
   profilePhotoKey         String?
-  createdAt               DateTime         @default(now())
-  updatedAt               DateTime         @updatedAt
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
   refreshTokens           RefreshToken[]
-  reviewsWritten          Review[]         @relation("ReviewsWritten")
-  reviewsReceived         Review[]         @relation("ReviewsReceived")
-  exercisesAssigned       Exercise[]       @relation("ExercisesAssigned")
-  exercisesCreated        Exercise[]       @relation("ExercisesCreated")
-  cardiosAssigned         Cardio[]         @relation("CardiosAssigned")
-  cardiosCreated          Cardio[]         @relation("CardiosCreated")
-  clientTrainersAsClient  ClientTrainer[]  @relation("ClientTrainersAsClient")
-  clientTrainersAsTrainer ClientTrainer[]  @relation("ClientTrainersAsTrainer")
+  reviewsWritten          Review[]                @relation("ReviewsWritten")
+  reviewsReceived         Review[]                @relation("ReviewsReceived")
+  exercisesAssigned       Exercise[]              @relation("ExercisesAssigned")
+  exercisesCreated        Exercise[]              @relation("ExercisesCreated")
+  cardiosAssigned         Cardio[]                @relation("CardiosAssigned")
+  cardiosCreated          Cardio[]                @relation("CardiosCreated")
+  clientTrainersAsClient  ClientTrainer[]         @relation("ClientTrainersAsClient")
+  clientTrainersAsTrainer ClientTrainer[]         @relation("ClientTrainersAsTrainer")
   bankAccounts            BankAccount[]
   workingHours            WorkingHour[]
-  workoutsAsClient        Workout[]        @relation("WorkoutsAsClient")
-  workoutsAsTrainer       Workout[]        @relation("WorkoutsAsTrainer")
+  workoutsAsClient        Workout[]               @relation("WorkoutsAsClient")
+  workoutsAsTrainer       Workout[]               @relation("WorkoutsAsTrainer")
   trainerCourses          TrainerCourse[]
-  conversationsAsClient   Conversation[]   @relation("ConversationsAsClient")
-  conversationsAsTrainer  Conversation[]   @relation("ConversationsAsTrainer")
-  messagesSent            Message[]        @relation("MessagesSent")
+  conversationsAsClient   Conversation[]          @relation("ConversationsAsClient")
+  conversationsAsTrainer  Conversation[]          @relation("ConversationsAsTrainer")
+  messagesSent            Message[]               @relation("MessagesSent")
   deviceTokens            DeviceToken[]
   notifications           Notification[]
   coupons                 Coupon[]
@@ -225,23 +234,23 @@ model PersonalLog {
 }
 
 model PersonalLogExercise {
-  id            String                    @id @default(uuid())
+  id            String                   @id @default(uuid())
   name          String
   personalLogId String
-  personalLog   PersonalLog               @relation(fields: [personalLogId], references: [id], onDelete: Cascade)
+  personalLog   PersonalLog              @relation(fields: [personalLogId], references: [id], onDelete: Cascade)
   sets          PersonalLogExerciseSet[]
-  createdAt     DateTime                  @default(now())
+  createdAt     DateTime                 @default(now())
 
   @@index([personalLogId])
 }
 
 model PersonalLogExerciseSet {
-  id                    String               @id @default(uuid())
+  id                    String              @id @default(uuid())
   order                 Int
   weightKg              Decimal?
   reps                  Int
   personalLogExerciseId String
-  personalLogExercise   PersonalLogExercise  @relation(fields: [personalLogExerciseId], references: [id], onDelete: Cascade)
+  personalLogExercise   PersonalLogExercise @relation(fields: [personalLogExerciseId], references: [id], onDelete: Cascade)
 
   @@unique([personalLogExerciseId, order])
 }
@@ -307,20 +316,21 @@ model WorkingHour {
 }
 
 model Workout {
-  id         String         @id @default(uuid())
-  trainerId  String
-  trainer    User           @relation("WorkoutsAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
-  clientId   String
-  client     User           @relation("WorkoutsAsClient", fields: [clientId], references: [id], onDelete: Cascade)
-  purchaseId String
-  purchase   CoursePurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  date       DateTime       @db.Date
-  fromTime   DateTime       @db.Time
-  toTime     DateTime       @db.Time
-  status     WorkoutStatus  @default(Pending)
-  exercises  Exercise[]
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
+  id           String         @id @default(uuid())
+  trainerId    String
+  trainer      User           @relation("WorkoutsAsTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  clientId     String
+  client       User           @relation("WorkoutsAsClient", fields: [clientId], references: [id], onDelete: Cascade)
+  purchaseId   String
+  purchase     CoursePurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  date         DateTime       @db.Date
+  fromTime     DateTime       @db.Time
+  toTime       DateTime       @db.Time
+  status       WorkoutStatus  @default(PendingApproval)
+  rejectReason String?
+  exercises    Exercise[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   @@index([trainerId])
   @@index([clientId])
