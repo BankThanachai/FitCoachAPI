@@ -26,9 +26,12 @@ export class ExercisesService {
     if (!workout) {
       throw new NotFoundException('Workout not found');
     }
-    if (workout.status !== WorkoutStatus.TrainerApproved) {
+    if (
+      workout.status !== WorkoutStatus.TrainerApproved &&
+      workout.status !== WorkoutStatus.ClientRejected
+    ) {
       throw new BadRequestException(
-        'Exercises can only be added to a workout the trainer has approved and not yet submitted',
+        'Exercises can only be added to a workout the trainer has approved and not yet submitted, or one the client has rejected and the trainer is revising',
       );
     }
 

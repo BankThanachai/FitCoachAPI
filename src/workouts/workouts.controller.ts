@@ -66,6 +66,7 @@ export class WorkoutsController {
       query.dateFrom,
       query.dateTo,
       query.clientName,
+      query.status,
     );
   }
 

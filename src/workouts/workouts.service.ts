@@ -222,9 +222,11 @@ export class WorkoutsService {
     dateFrom?: string,
     dateTo?: string,
     clientName?: string,
+    status?: WorkoutStatus,
   ) {
     const where: Prisma.WorkoutWhereInput = {
       trainerId,
+      status,
       date: date
         ? new Date(date)
         : dateFrom || dateTo
@@ -373,8 +375,10 @@ export class WorkoutsService {
   /**
    * Trainer finishes training the client and submits the session for the
    * client to review, moving it from TrainerApproved to TrainerSubmitted.
-   * Only the trainer on the workout may call this, and only from
-   * TrainerApproved.
+   * Also callable from ClientRejected — the client disputing a submission
+   * isn't final, the trainer can resubmit (with or without editing the
+   * logged exercises first) for another round of review. Only the trainer
+   * on the workout may call this.
    */
   async submitTraining(id: string, trainerId: string) {
     const workout = await this.prisma.workout.findUnique({ where: { id } });
@@ -388,12 +392,17 @@ export class WorkoutsService {
     }
 
     const { count } = await this.prisma.workout.updateMany({
-      where: { id, status: WorkoutStatus.TrainerApproved },
-      data: { status: WorkoutStatus.TrainerSubmitted },
+      where: {
+        id,
+        status: {
+          in: [WorkoutStatus.TrainerApproved, WorkoutStatus.ClientRejected],
+        },
+      },
+      data: { status: WorkoutStatus.TrainerSubmitted, rejectReason: null },
     });
     if (count === 0) {
       throw new BadRequestException(
-        'Only an approved workout can be submitted',
+        'Only an approved or client-rejected workout can be submitted',
       );
     }
 

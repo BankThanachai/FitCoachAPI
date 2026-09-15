@@ -1,4 +1,5 @@
-import { IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import { WorkoutStatus } from '../../../generated/prisma/client';
 import { PaginationQueryDto } from '../../shared/dto/pagination-query.dto';
 
 export class FindTrainerWorkoutsDto extends PaginationQueryDto {
@@ -6,6 +7,11 @@ export class FindTrainerWorkoutsDto extends PaginationQueryDto {
   @IsOptional()
   @IsDateString()
   date?: string;
+
+  /** Narrows to workouts currently in this status. */
+  @IsOptional()
+  @IsEnum(WorkoutStatus)
+  status?: WorkoutStatus;
 
   /** Narrows to workouts on or after this calendar date (`YYYY-MM-DD`, inclusive). */
   @IsOptional()

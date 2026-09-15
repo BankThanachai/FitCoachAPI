@@ -51,9 +51,11 @@ enum WorkingHourStatus {
 // and submits the session for the client to review (submitTraining).
 // TrainerSubmitted -> Completed: client approves the submission
 // (approveSubmission) — terminal. TrainerSubmitted -> ClientRejected:
-// client disputes it instead (rejectSubmission) — terminal. Cancelled is
-// reachable from any non-terminal status by either party
-// (cancelWorkout).
+// client disputes it instead (rejectSubmission) — not terminal: the
+// trainer can revise the logged exercises and resubmit (submitTraining
+// again, ClientRejected -> TrainerSubmitted), clearing the stored
+// rejectReason. Cancelled is reachable from any non-terminal status by
+// either party (cancelWorkout).
 enum WorkoutStatus {
   PendingApproval
   TrainerApproved
