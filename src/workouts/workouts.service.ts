@@ -79,6 +79,12 @@ export class WorkoutsService {
     private readonly coursePurchasesService: CoursePurchasesService,
   ) {}
 
+  /**
+   * Checks the trainer has no other workout booked over this time slot.
+   * Cancelled and TrainerRejected workouts don't hold the slot — same
+   * statuses excluded in getAvailableTimeOnDate/getAvailableOnMonth,
+   * for the same reason (nothing actually happened there).
+   */
   private async ensureNoOverlap(
     trainerId: string,
     date: Date,
@@ -93,6 +99,9 @@ export class WorkoutsService {
         date,
         fromTime: { lt: toTime },
         toTime: { gt: fromTime },
+        status: {
+          notIn: [WorkoutStatus.Cancelled, WorkoutStatus.TrainerRejected],
+        },
       },
     });
     if (overlapping) {
