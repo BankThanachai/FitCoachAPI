@@ -114,6 +114,72 @@ describe('CoursePurchasesService.purchaseAndJoin', () => {
     service = module.get(CoursePurchasesService);
   });
 
+  describe('trial course (amount 0)', () => {
+    it('commits directly without calling Omise when method is Card', async () => {
+      prisma.trainerCourse.findUnique.mockResolvedValue(
+        makeCourse({ isTrial: true, price: 0 }),
+      );
+
+      await service.purchaseAndJoin(CLIENT_ID, COURSE_ID, {
+        couponIds: ['trial-coupon-1'],
+        method: PaymentMethod.Card,
+      });
+
+      expect(omiseService.chargeWithToken).not.toHaveBeenCalled();
+      expect(omiseService.createPromptPaySource).not.toHaveBeenCalled();
+      expect(omiseService.chargeFromSource).not.toHaveBeenCalled();
+      expect(paymentsService.createInTransaction).toHaveBeenCalledWith(
+        fakeTx,
+        CLIENT_ID,
+        'purchase-1',
+        expect.objectContaining({
+          method: PaymentMethod.Card,
+          amount: 0,
+          status: PaymentStatus.Successful,
+        }),
+      );
+    });
+
+    it('commits directly without calling Omise when method is PromptPay', async () => {
+      prisma.trainerCourse.findUnique.mockResolvedValue(
+        makeCourse({ isTrial: true, price: 0 }),
+      );
+
+      await service.purchaseAndJoin(CLIENT_ID, COURSE_ID, {
+        couponIds: ['trial-coupon-1'],
+        method: PaymentMethod.PromptPay,
+      });
+
+      expect(omiseService.chargeWithToken).not.toHaveBeenCalled();
+      expect(omiseService.createPromptPaySource).not.toHaveBeenCalled();
+      expect(omiseService.chargeFromSource).not.toHaveBeenCalled();
+      expect(paymentsService.createInTransaction).toHaveBeenCalledWith(
+        fakeTx,
+        CLIENT_ID,
+        'purchase-1',
+        expect.objectContaining({
+          method: PaymentMethod.PromptPay,
+          amount: 0,
+          status: PaymentStatus.Successful,
+        }),
+      );
+    });
+
+    it('does not require an omiseToken even for method Card', async () => {
+      prisma.trainerCourse.findUnique.mockResolvedValue(
+        makeCourse({ isTrial: true, price: 0 }),
+      );
+
+      await expect(
+        service.purchaseAndJoin(CLIENT_ID, COURSE_ID, {
+          couponIds: ['trial-coupon-1'],
+          method: PaymentMethod.Card,
+          // omiseToken intentionally omitted
+        }),
+      ).resolves.toBeDefined();
+    });
+  });
+
   describe('paid course (amount > 0)', () => {
     it('calls Omise chargeWithToken for Card and commits on success', async () => {
       prisma.trainerCourse.findUnique.mockResolvedValue(

@@ -113,6 +113,22 @@ export class CoursePurchasesService {
     // the client never gets to say how much it's being charged.
     const amount = course.price;
 
+    // Trial courses are always free (see coupons.service.ts's Trial-coupon
+    // pairing rule — a trial course requires exactly one Trial coupon and
+    // is priced at 0). Omise rejects charges below its THB minimum (20
+    // baht), so a 0-amount charge must never reach it — skip Omise
+    // entirely and commit directly, regardless of which `method` the
+    // client sent (it's meaningless when nothing is actually charged).
+    if (amount.isZero()) {
+      return this.purchaseAndJoinWithoutPayment(
+        clientId,
+        courseId,
+        course.trainerId,
+        couponIds,
+        purchaseAndJoinDto.method,
+      );
+    }
+
     if (purchaseAndJoinDto.method === PaymentMethod.Card) {
       if (!purchaseAndJoinDto.omiseToken) {
         throw new BadRequestException(
@@ -190,6 +206,31 @@ export class CoursePurchasesService {
       purchase: result.purchase,
       payment: result.payment,
     };
+  }
+
+  private async purchaseAndJoinWithoutPayment(
+    clientId: string,
+    courseId: string,
+    trainerId: string,
+    couponIds: string[],
+    method: PaymentMethod,
+  ) {
+    // amount is 0 (trial course) — nothing to charge, so Omise is never
+    // called. `method` is stored as-is but carries no meaning here; the
+    // client isn't required to reason about payment method for a free
+    // course.
+    return this.commitPurchaseAndJoin(
+      clientId,
+      courseId,
+      trainerId,
+      couponIds,
+      {
+        method,
+        amount: 0,
+        status: PaymentStatus.Successful,
+        paidAt: new Date(),
+      },
+    );
   }
 
   private async purchaseAndJoinWithCard(

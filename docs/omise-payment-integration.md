@@ -10,7 +10,8 @@ Backend repo root: `/Users/be8-thanachaiw/Desktop/Project/Learning/My App/FitCoa
 
 - `src/course-purchases/dto/purchase-and-join.dto.ts` — request body shape
 - `src/course-purchases/course-purchases.service.ts` — `purchaseAndJoin()`,
-  `purchaseAndJoinWithCard()`, `purchaseAndJoinWithPromptPay()`, `ensureUsable()`
+  `purchaseAndJoinWithoutPayment()`, `purchaseAndJoinWithCard()`,
+  `purchaseAndJoinWithPromptPay()`, `ensureUsable()`
 - `src/payments/payments.controller.ts` — all payment-related routes
 - `src/payments/payments.service.ts` — `getStatus()`, `handleWebhookEvent()`
 - `src/payments/omise.service.ts` — Omise SDK wrapper (backend-only, not
@@ -112,6 +113,43 @@ Mobile must:
   booking will fail with `BadRequestException: "This course purchase has not
   been paid for yet"` until the payment is `Successful`.
 
+### Trial course flow (amount = 0) — skips Omise entirely
+
+A trial course (`TrainerCourse.isTrial === true`) is always free — its price
+is 0, and it's always purchased together with exactly one Trial coupon. Omise
+rejects any charge below its THB minimum (20 baht), so **the backend never
+calls Omise at all when the computed amount is 0** — this applies regardless
+of which `method` was sent in the request body.
+
+- Call Endpoint 1 exactly as usual: `couponIds: [<trial coupon id>]`,
+  `method` can be `"Card"` or `"PromptPay"` (or really anything accepted by
+  the enum) — **it's accepted but has no effect** when amount is 0. If
+  `method: "Card"`, `omiseToken` is **not required** for this case (send it
+  or omit it, both work — it's ignored).
+- Response comes back immediately, same shape as the successful Card flow:
+  ```jsonc
+  {
+    "clientTrainer": { /* ... */ },
+    "purchase": { /* CoursePurchase */ },
+    "payment": { /* Payment row, status: "Successful", amount: 0, opnChargeId: null */ }
+  }
+  ```
+- **No `qrCodeUrl` or `expiresAt`** in the response for this case (those only
+  appear on the async PromptPay-with-a-real-charge path). If mobile is
+  branching on the presence of `qrCodeUrl` to decide whether to show a QR
+  screen, that check already correctly skips the QR screen here — no special
+  casing needed for trial courses beyond that.
+- Purchase is immediately usable (`payment.status` is already `"Successful"`)
+  — **no polling needed**, same as a successful Card payment.
+
+Practical implication for mobile: you do not need to detect "is this a trial
+course" client-side and special-case the request — send the purchase request
+the same way you always would (whatever `method` your UI currently defaults
+to for a free/trial course is fine), and read the response the same way you
+already do for Card. The only thing to avoid is assuming a `qrCodeUrl` will
+always be present just because `method` was `"PromptPay"` — check for its
+presence rather than branching purely on the `method` you sent.
+
 ## Endpoint 2 — Poll payment status (PromptPay only; new endpoint)
 
 ```
@@ -160,7 +198,9 @@ wiring exists for this flow. Poll for status.
 
 ## Order of operations mobile needs to implement
 
-1. User picks a course + optional coupons, picks payment method.
+1. User picks a course + optional coupons, picks payment method (if the
+   course isn't free — see trial-course section above for the amount-0 case,
+   which doesn't need special handling on the request side).
 2. **If Card**: tokenize the card client-side using Omise's Public Key SDK
    (get the current `OMISE_PUBLIC_KEY` value from the backend `.env` — ask,
    don't guess — it's a `pkey_test_...` string in test mode) → get back a
@@ -168,11 +208,15 @@ wiring exists for this flow. Poll for status.
    - Success → done, purchase is immediately usable.
    - Failure → show the returned Thai error message, let user retry.
 3. **If PromptPay**: call Endpoint 1 with `method: "PromptPay"` (no token) →
-   get back `qrCodeUrl` + `expiresAt` + `payment.opnChargeId` → show QR →
-   poll Endpoint 2 with that `opnChargeId` every few seconds until status
-   changes → on `Successful`, purchase becomes usable; on `Failed`/`Expired`,
-   show the error and let the user retry (which creates a fresh
-   purchase+payment — the old `Pending` one stays as a dead/expired record).
+   check the response for `qrCodeUrl`:
+   - **Present** → show QR, poll Endpoint 2 with `payment.opnChargeId` every
+     few seconds until status changes → on `Successful`, purchase becomes
+     usable; on `Failed`/`Expired`, show the error and let the user retry
+     (which creates a fresh purchase+payment — the old `Pending` one stays as
+     a dead/expired record).
+   - **Absent** → this was actually a free/trial course purchase (amount 0);
+     `payment.status` is already `"Successful"` — treat it like a successful
+     Card purchase, no QR screen, no polling.
 
 ## Auth
 
