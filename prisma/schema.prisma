@@ -114,6 +114,7 @@ model User {
   birthDate               DateTime?
   weightKg                Decimal?                @db.Decimal(5, 2)
   heightCm                Decimal?                @db.Decimal(5, 2)
+  medicalConditions       String?
   gender                  Gender
   province                String
   district                String

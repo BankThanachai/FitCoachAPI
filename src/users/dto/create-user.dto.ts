@@ -48,6 +48,10 @@ export class CreateUserDto {
   heightCm?: number;
 
   @IsOptional()
+  @IsString()
+  medicalConditions?: string;
+
+  @IsOptional()
   @IsBoolean()
   acceptsPartnerWork?: boolean;
 
