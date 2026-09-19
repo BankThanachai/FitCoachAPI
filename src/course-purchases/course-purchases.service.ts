@@ -311,7 +311,7 @@ export class CoursePurchasesService {
       include: {
         course: true,
         review: { select: { id: true } },
-        _count: { select: { coupons: true } },
+        coupons: { select: { couponId: true } },
         payment: { select: { status: true, opnChargeId: true } },
       },
       orderBy: { purchasedAt: 'desc' },
@@ -334,8 +334,9 @@ export class CoursePurchasesService {
       completedCounts.map((row) => [row.purchaseId, row._count]),
     );
 
-    return purchases.map(({ _count, review, payment, ...purchase }) => {
+    return purchases.map(({ coupons, review, payment, ...purchase }) => {
       const sessions = sessionsByPurchase.get(purchase.id);
+      const couponIds = coupons.map((c) => c.couponId);
       return {
         ...purchase,
         remainingSessions: sessions?.remainingSessions ?? 0,
@@ -348,7 +349,13 @@ export class CoursePurchasesService {
         // GET /workouts/client is paginated and no longer returns every
         // workout in one response.
         completedSessions: completedByPurchaseId.get(purchase.id) ?? 0,
-        couponsUsed: _count.coupons,
+        couponsUsed: couponIds.length,
+        // Lets mobile re-purchase after a Failed/Expired payment with the
+        // same coupons pre-filled, skipping straight to the payment-method
+        // screen instead of re-picking a course/coupons from scratch — the
+        // coupons themselves are already released and reusable by then (see
+        // releaseCouponsForPurchase in PaymentsService).
+        couponIds,
         hasReview: !!review,
         // Raw DB status, not derived/expired client-side — mobile calls
         // GET /payments/:chargeId/status (which reconciles against Omise)

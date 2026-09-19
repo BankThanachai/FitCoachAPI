@@ -234,7 +234,9 @@ Each purchase row now includes:
   "id": "...",
   "course": { /* ... */ },
   "remainingSessions": 10,
+  "couponsUsed": 1,
   // NEW:
+  "couponIds": ["uuid-1"],  // coupon ids redeemed against this specific purchase; [] if none
   "paymentStatus": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed" | "Cancelled" | null,
   "opnChargeId": "chrg_test_..." | null
 }
@@ -260,6 +262,17 @@ Each purchase row now includes:
   lookup needed.
 - **A cancelled purchase (Endpoint 5) simply disappears from this list** —
   it is not returned with `paymentStatus: "Cancelled"`. See Endpoint 5.
+- **`couponIds`** is meant for re-purchasing after a `"Failed"`/`"Expired"`
+  payment: those coupons are already released and reusable (see "Coupons are
+  released automatically" below), but mobile has no other way to know which
+  coupon ids were originally selected. Use it to jump the user straight to a
+  "choose payment method" screen for a fresh `purchaseAndJoin` call —
+  `{ couponIds, method, omiseToken? }` — with the same course and coupons
+  pre-filled, skipping course/coupon re-selection entirely. Not meant to
+  imply those coupons are still valid/unexpired — `purchaseAndJoin` (via
+  `CouponsService.validateCouponsForCourse`) validates that at purchase
+  time, same as any other coupon usage; this field is just historical data
+  about what was picked before, not a live-validity check.
 
 ## Endpoint 5 — Cancel a pending PromptPay payment (deletes the purchase)
 

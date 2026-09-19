@@ -320,7 +320,7 @@ describe('CoursePurchasesService.findMyPurchasesUnderTrainer', () => {
         purchasedAt: new Date(),
         course: { id: COURSE_ID, sessions: 10 },
         review: null,
-        _count: { coupons: 0 },
+        coupons: [],
         payment: {
           status: PaymentStatus.Pending,
           opnChargeId: 'chrg_test_pending',
@@ -333,7 +333,7 @@ describe('CoursePurchasesService.findMyPurchasesUnderTrainer', () => {
         purchasedAt: new Date(),
         course: { id: COURSE_ID, sessions: 10 },
         review: null,
-        _count: { coupons: 0 },
+        coupons: [],
         payment: {
           status: PaymentStatus.Successful,
           opnChargeId: 'chrg_test_paid',
@@ -357,6 +357,32 @@ describe('CoursePurchasesService.findMyPurchasesUnderTrainer', () => {
     expect(result[0]).not.toHaveProperty('payment');
   });
 
+  it('surfaces couponIds redeemed against the purchase, and derives couponsUsed from it', async () => {
+    prisma.coursePurchase.findMany.mockResolvedValue([
+      {
+        id: 'purchase-with-coupons',
+        clientId: CLIENT_ID,
+        courseId: COURSE_ID,
+        purchasedAt: new Date(),
+        course: { id: COURSE_ID, sessions: 10 },
+        review: null,
+        coupons: [{ couponId: 'coupon-1' }, { couponId: 'coupon-2' }],
+        payment: {
+          status: PaymentStatus.Failed,
+          opnChargeId: 'chrg_test_failed',
+        },
+      },
+    ]);
+
+    const result = await service.findMyPurchasesUnderTrainer(CLIENT_ID);
+
+    expect(result[0]).toMatchObject({
+      couponIds: ['coupon-1', 'coupon-2'],
+      couponsUsed: 2,
+    });
+    expect(result[0]).not.toHaveProperty('coupons');
+  });
+
   it('returns null paymentStatus/opnChargeId when a purchase has no Payment row', async () => {
     prisma.coursePurchase.findMany.mockResolvedValue([
       {
@@ -366,7 +392,7 @@ describe('CoursePurchasesService.findMyPurchasesUnderTrainer', () => {
         purchasedAt: new Date(),
         course: { id: COURSE_ID, sessions: 10 },
         review: null,
-        _count: { coupons: 0 },
+        coupons: [],
         payment: null,
       },
     ]);
