@@ -104,7 +104,12 @@ PromptPay is asynchronous (QR-based). The backend:
 Mobile must:
 - Render `qrCodeUrl` as an image (it's a direct image URL from Omise, already
   a scannable PromptPay QR — not raw QR data to encode yourselves)
-- Show a countdown/expiry using `expiresAt`
+- Show a countdown/expiry using `expiresAt` — **fixed at 15 minutes from
+  generation** (backend explicitly sets Omise's `expires_at` charge param to
+  `now + 15min`; Omise's own default is 24h if left unset, which is what an
+  earlier version of this backend was doing by mistake — if `expiresAt` ever
+  looks like ~24h out again, that's a backend regression, not something to
+  work around client-side)
 - Start polling `GET /api/v1/payments/:chargeId/status` (below), using
   `payment.opnChargeId` as `:chargeId`, until status is no longer `Pending`
 - **A `Pending` PromptPay purchase cannot be used yet** — e.g. the client
