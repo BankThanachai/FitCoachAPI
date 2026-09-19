@@ -43,8 +43,20 @@ export class PaymentsController {
     return this.paymentsService.findOne(id);
   }
 
-  // Opn calls this endpoint directly (no JWT). Signature verification against
-  // OPN_WEBHOOK_SECRET must be added here before this goes to production.
+  // Client polling endpoint for async (PromptPay) payments.
+  @UseGuards(JwtAuthGuard)
+  @Get(':chargeId/status')
+  getStatus(
+    @Req() request: Request & { user: JwtPayload },
+    @Param('chargeId') chargeId: string,
+  ) {
+    return this.paymentsService.getStatus(chargeId, request.user.sub);
+  }
+
+  // Opn calls this endpoint directly (no JWT). Verified server-side by
+  // re-fetching the charge from the Omise API with the secret key
+  // (PaymentsService.handleWebhookEvent) rather than trusting this payload,
+  // since Omise's webhook product has no signature header to check.
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   handleWebhook(@Body() body: OpnWebhookDto) {

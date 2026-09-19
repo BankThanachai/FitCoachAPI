@@ -3,9 +3,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, UserType, WorkoutStatus } from '../../generated/prisma/client';
+import {
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  UserType,
+  WorkoutStatus,
+} from '../../generated/prisma/client';
 import { ClientTrainersService } from '../client-trainers/client-trainers.service';
 import { CouponsService } from '../coupons/coupons.service';
+import { translateOmiseFailure } from '../payments/omise-error.util';
+import { OmiseService } from '../payments/omise.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
@@ -19,6 +27,7 @@ export class CoursePurchasesService {
     private readonly couponsService: CouponsService,
     private readonly clientTrainersService: ClientTrainersService,
     private readonly paymentsService: PaymentsService,
+    private readonly omiseService: OmiseService,
     private readonly coursePurchaseCalculationsService: CoursePurchaseCalculationsService,
   ) {}
 
@@ -100,20 +109,61 @@ export class CoursePurchasesService {
   ) {
     const couponIds = purchaseAndJoinDto.couponIds ?? [];
     const course = await this.validatePurchase(clientId, courseId, couponIds);
+    // course.price (server-side) is the only source of truth for amount —
+    // the client never gets to say how much it's being charged.
+    const amount = course.price;
 
+    if (purchaseAndJoinDto.method === PaymentMethod.Card) {
+      if (!purchaseAndJoinDto.omiseToken) {
+        throw new BadRequestException(
+          'omiseToken is required for card payments',
+        );
+      }
+      return this.purchaseAndJoinWithCard(
+        clientId,
+        courseId,
+        course.trainerId,
+        couponIds,
+        amount,
+        purchaseAndJoinDto.omiseToken,
+      );
+    }
+
+    if (purchaseAndJoinDto.method === PaymentMethod.PromptPay) {
+      return this.purchaseAndJoinWithPromptPay(
+        clientId,
+        courseId,
+        course.trainerId,
+        couponIds,
+        amount,
+      );
+    }
+
+    throw new BadRequestException(
+      `Payment method ${purchaseAndJoinDto.method} is not supported yet`,
+    );
+  }
+
+  private async commitPurchaseAndJoin(
+    clientId: string,
+    courseId: string,
+    trainerId: string,
+    couponIds: string[],
+    paymentData: Parameters<PaymentsService['createInTransaction']>[3],
+  ) {
     const result = await this.prisma.$transaction(async (tx) => {
       const { relation, created: joined } =
         await this.clientTrainersService.ensureAcceptedInTransaction(
           tx,
           clientId,
-          course.trainerId,
+          trainerId,
         );
 
       const purchase = await this.createPurchaseInTransaction(
         tx,
         clientId,
         courseId,
-        course.trainerId,
+        trainerId,
         couponIds,
       );
 
@@ -121,12 +171,7 @@ export class CoursePurchasesService {
         tx,
         clientId,
         purchase.id,
-        {
-          method: purchaseAndJoinDto.method,
-          amount: purchaseAndJoinDto.amount,
-          opnChargeId: purchaseAndJoinDto.opnChargeId,
-          opnSourceId: purchaseAndJoinDto.opnSourceId,
-        },
+        paymentData,
       );
 
       return { relation, joined, purchase, payment };
@@ -135,7 +180,7 @@ export class CoursePurchasesService {
     if (result.joined) {
       await this.clientTrainersService.notifyJoined(
         clientId,
-        course.trainerId,
+        trainerId,
         result.relation.id,
       );
     }
@@ -144,6 +189,73 @@ export class CoursePurchasesService {
       clientTrainer: result.relation,
       purchase: result.purchase,
       payment: result.payment,
+    };
+  }
+
+  private async purchaseAndJoinWithCard(
+    clientId: string,
+    courseId: string,
+    trainerId: string,
+    couponIds: string[],
+    amount: Prisma.Decimal,
+    omiseToken: string,
+  ) {
+    // Network call to Omise happens before any DB write — never commit the
+    // purchase/join unless the charge actually succeeded.
+    const charge = await this.omiseService.chargeWithToken(amount, omiseToken);
+
+    if (charge.status !== 'successful') {
+      throw new BadRequestException(translateOmiseFailure(charge.failure_code));
+    }
+
+    return this.commitPurchaseAndJoin(
+      clientId,
+      courseId,
+      trainerId,
+      couponIds,
+      {
+        method: PaymentMethod.Card,
+        amount,
+        opnChargeId: charge.id,
+        status: PaymentStatus.Successful,
+        paidAt: new Date(),
+      },
+    );
+  }
+
+  private async purchaseAndJoinWithPromptPay(
+    clientId: string,
+    courseId: string,
+    trainerId: string,
+    couponIds: string[],
+    amount: Prisma.Decimal,
+  ) {
+    const source = await this.omiseService.createPromptPaySource(amount);
+    const charge = await this.omiseService.chargeFromSource(amount, source.id);
+
+    // PromptPay is async — the charge starts Pending. Joining/purchasing now
+    // (rather than waiting for the webhook) treats paying as a stronger
+    // signal than a request, same as ensureAcceptedInTransaction already
+    // does; usability of the purchase itself is separately gated on
+    // Payment.status === Successful (see CoursePurchasesService.ensureUsable).
+    const result = await this.commitPurchaseAndJoin(
+      clientId,
+      courseId,
+      trainerId,
+      couponIds,
+      {
+        method: PaymentMethod.PromptPay,
+        amount,
+        opnChargeId: charge.id,
+        opnSourceId: source.id,
+        status: PaymentStatus.Pending,
+      },
+    );
+
+    return {
+      ...result,
+      qrCodeUrl: charge.source?.scannable_code?.image?.download_uri,
+      expiresAt: charge.expires_at,
     };
   }
 
@@ -203,7 +315,7 @@ export class CoursePurchasesService {
   async ensureUsable(purchaseId: string, clientId: string, trainerId: string) {
     const purchase = await this.prisma.coursePurchase.findUnique({
       where: { id: purchaseId },
-      include: { course: true },
+      include: { course: true, payment: true },
     });
     if (!purchase) {
       throw new NotFoundException('Course purchase not found');
@@ -216,6 +328,17 @@ export class CoursePurchasesService {
     if (purchase.course.trainerId !== trainerId) {
       throw new BadRequestException(
         'This course purchase does not belong to this trainer',
+      );
+    }
+    // A PromptPay purchase is created eagerly (Pending) before the payment
+    // actually clears — it can't be used to book a session until the Omise
+    // webhook (or a status poll) confirms it as Successful.
+    if (
+      purchase.payment &&
+      purchase.payment.status !== PaymentStatus.Successful
+    ) {
+      throw new BadRequestException(
+        'This course purchase has not been paid for yet',
       );
     }
 

@@ -1,23 +1,24 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  Prisma,
-  PaymentStatus,
-  UserType,
-} from '../../generated/prisma/client';
+import { Prisma, PaymentStatus, UserType } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { paginate } from '../shared/pagination.util';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { SearchPaymentDto } from './dto/search-payment.dto';
+import { OmiseService } from './omise.service';
 
 const PAGE_SIZE_DEFAULT = 20;
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly omiseService: OmiseService,
+  ) {}
 
   async create(clientId: string, createPaymentDto: CreatePaymentDto) {
     const client = await this.prisma.user.findUnique({
@@ -57,19 +58,24 @@ export class PaymentsService {
     tx: Prisma.TransactionClient,
     clientId: string,
     purchaseId: string,
-    createPaymentDto: Pick<
-      CreatePaymentDto,
-      'method' | 'amount' | 'opnChargeId' | 'opnSourceId'
-    >,
+    data: Pick<CreatePaymentDto, 'method'> & {
+      amount: number | Prisma.Decimal;
+      opnChargeId?: string;
+      opnSourceId?: string;
+      status: PaymentStatus;
+      paidAt?: Date;
+    },
   ) {
     return tx.payment.create({
       data: {
         clientId,
         purchaseId,
-        method: createPaymentDto.method,
-        amount: createPaymentDto.amount,
-        opnChargeId: createPaymentDto.opnChargeId,
-        opnSourceId: createPaymentDto.opnSourceId,
+        method: data.method,
+        amount: data.amount,
+        opnChargeId: data.opnChargeId,
+        opnSourceId: data.opnSourceId,
+        status: data.status,
+        paidAt: data.paidAt,
       },
     });
   }
@@ -156,6 +162,10 @@ export class PaymentsService {
       return { deduplicated: true, matched: false };
     }
 
+    // The payload's charge id only tells us WHICH charge to look up — never
+    // trust its status/failure_code/etc, since the payload itself is
+    // unauthenticated and can be forged. Always re-fetch from Omise with the
+    // secret key before writing anything derived from it to the DB.
     const opnChargeId =
       chargeData && typeof chargeData.id === 'string'
         ? chargeData.id
@@ -171,15 +181,8 @@ export class PaymentsService {
       return { deduplicated: false, matched: false };
     }
 
-    const status = this.mapOpnStatus(chargeData?.status);
-    const failureCode =
-      chargeData && typeof chargeData.failure_code === 'string'
-        ? chargeData.failure_code
-        : undefined;
-    const failureMessage =
-      chargeData && typeof chargeData.failure_message === 'string'
-        ? chargeData.failure_message
-        : undefined;
+    const verifiedCharge = await this.omiseService.retrieveCharge(opnChargeId);
+    const status = this.mapOpnStatus(verifiedCharge.status);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.paymentEvent.create({
@@ -198,8 +201,8 @@ export class PaymentsService {
             status,
             paidAt:
               status === PaymentStatus.Successful ? new Date() : undefined,
-            failureCode,
-            failureMessage,
+            failureCode: verifiedCharge.failure_code ?? undefined,
+            failureMessage: verifiedCharge.failure_message ?? undefined,
           },
         });
       }
@@ -207,4 +210,57 @@ export class PaymentsService {
 
     return { deduplicated: false, matched: true };
   }
+
+  // Client polling endpoint for async (PromptPay) payments. If still Pending
+  // locally, reconciles against Omise directly rather than waiting on the
+  // webhook, so the client isn't stuck if a webhook delivery is delayed/lost.
+  async getStatus(chargeId: string, clientId: string) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { opnChargeId: chargeId },
+    });
+    if (!payment) {
+      throw new NotFoundException(
+        `Payment with charge id ${chargeId} not found`,
+      );
+    }
+    if (payment.clientId !== clientId) {
+      throw new ForbiddenException('This payment does not belong to you');
+    }
+
+    if (payment.status !== PaymentStatus.Pending) {
+      return {
+        status: payment.status,
+        paidAt: payment.paidAt,
+        failureMessage: payment.failureMessage,
+      };
+    }
+
+    const verifiedCharge = await this.omiseService.retrieveCharge(chargeId);
+    const status = this.mapOpnStatus(verifiedCharge.status);
+
+    if (!status || status === payment.status) {
+      return {
+        status: payment.status,
+        paidAt: payment.paidAt,
+        failureMessage: payment.failureMessage,
+      };
+    }
+
+    const updated = await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status,
+        paidAt: status === PaymentStatus.Successful ? new Date() : undefined,
+        failureCode: verifiedCharge.failure_code ?? undefined,
+        failureMessage: verifiedCharge.failure_message ?? undefined,
+      },
+    });
+
+    return {
+      status: updated.status,
+      paidAt: updated.paidAt,
+      failureMessage: updated.failureMessage,
+    };
+  }
 }
+

@@ -2,11 +2,10 @@ import {
   ArrayUnique,
   IsArray,
   IsEnum,
-  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
-  Min,
+  ValidateIf,
 } from 'class-validator';
 import { PaymentMethod } from '../../../generated/prisma/client';
 
@@ -20,15 +19,10 @@ export class PurchaseAndJoinDto {
   @IsEnum(PaymentMethod)
   method: PaymentMethod;
 
-  @IsNumber()
-  @Min(0)
-  amount: number;
-
-  @IsOptional()
+  // Required when method === Card: the token Omise.js/the Flutter SDK
+  // produced by tokenizing the card client-side. Never accept raw card
+  // fields here — the backend must not see card numbers.
+  @ValidateIf((dto: PurchaseAndJoinDto) => dto.method === PaymentMethod.Card)
   @IsString()
-  opnChargeId?: string;
-
-  @IsOptional()
-  @IsString()
-  opnSourceId?: string;
+  omiseToken?: string;
 }
