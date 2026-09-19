@@ -53,6 +53,18 @@ export class PaymentsController {
     return this.paymentsService.getStatus(chargeId, request.user.sub);
   }
 
+  // Lets the client back out of a still-Pending PromptPay purchase instead
+  // of waiting out the QR's expiry.
+  @UseGuards(JwtAuthGuard)
+  @Post(':chargeId/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(
+    @Req() request: Request & { user: JwtPayload },
+    @Param('chargeId') chargeId: string,
+  ) {
+    return this.paymentsService.cancel(chargeId, request.user.sub);
+  }
+
   // Opn calls this endpoint directly (no JWT). Verified server-side by
   // re-fetching the charge from the Omise API with the secret key
   // (PaymentsService.handleWebhookEvent) rather than trusting this payload,

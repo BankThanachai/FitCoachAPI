@@ -14,7 +14,8 @@ Backend repo root: `/Users/be8-thanachaiw/Desktop/Project/Learning/My App/FitCoa
   `purchaseAndJoinWithPromptPay()`, `ensureUsable()`,
   `findMyPurchasesUnderTrainer()`
 - `src/payments/payments.controller.ts` — all payment-related routes
-- `src/payments/payments.service.ts` — `getStatus()`, `handleWebhookEvent()`
+- `src/payments/payments.service.ts` — `getStatus()`, `handleWebhookEvent()`,
+  `cancel()`
 - `src/payments/omise.service.ts` — Omise SDK wrapper (backend-only, not
   directly relevant to mobile, but shows exactly what's sent to Omise)
 - `src/payments/omise.config.ts` — env vars (`OMISE_PUBLIC_KEY` is the one
@@ -169,15 +170,20 @@ Authorization: Bearer <client JWT>
 Response:
 ```jsonc
 {
-  "status": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed",
+  "status": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed" | "Cancelled",
   "paidAt": "2026-09-19T12:00:00Z" | null,
-  "failureMessage": "การชำระเงินไม่สำเร็จ..." // only present if Failed/Expired
+  "failureMessage": "การชำระเงินไม่สำเร็จ...", // only present if Failed/Expired
   // only present while status === "Pending" (i.e. only ever for a
   // PromptPay charge; Card charges never stay Pending):
   "qrCodeUrl": "https://api.omise.co/.../download",
   "expiresAt": "2026-09-19T12:34:56Z"
 }
 ```
+
+`"Cancelled"` is a new status value (added alongside Endpoint 5 below) —
+if mobile has a switch/enum over `PaymentStatus` anywhere, add this case.
+It behaves like a dead end, same as `"Failed"`/`"Expired"`: no `qrCodeUrl`,
+purchase never becomes usable, user must start a fresh purchase.
 
 `qrCodeUrl`/`expiresAt` are **re-fetched from Omise on every call while
 Pending**, not stored — this lets you re-show the exact same QR when the user
@@ -193,6 +199,12 @@ the payment doesn't belong to the calling client) and — if still `Pending`
 locally — actively re-checks with Omise on each call, so it will reflect a
 successful payment even if a webhook delivery is delayed, without mobile
 needing to know anything about webhooks.
+
+**Behavior change**: after a successful cancel (Endpoint 5), the `Payment`
+row is deleted, not just marked `"Cancelled"`. Calling this endpoint with
+that `chargeId` afterward returns HTTP 404 `NotFoundException`, not
+`{ status: "Cancelled" }`. Mobile should not call this endpoint after it has
+itself just cancelled that charge — there's nothing left to poll.
 
 ## Endpoint 3 — Webhook (backend/Omise only, not relevant to mobile)
 
@@ -223,7 +235,7 @@ Each purchase row now includes:
   "course": { /* ... */ },
   "remainingSessions": 10,
   // NEW:
-  "paymentStatus": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed" | null,
+  "paymentStatus": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed" | "Cancelled" | null,
   "opnChargeId": "chrg_test_..." | null
 }
 ```
@@ -246,6 +258,68 @@ Each purchase row now includes:
   enforcement.
 - Use `opnChargeId` directly as `:chargeId` for Endpoint 2 — no separate
   lookup needed.
+- **A cancelled purchase (Endpoint 5) simply disappears from this list** —
+  it is not returned with `paymentStatus: "Cancelled"`. See Endpoint 5.
+
+## Endpoint 5 — Cancel a pending PromptPay payment (deletes the purchase)
+
+```
+POST /api/v1/payments/:chargeId/cancel
+Authorization: Bearer <client JWT>
+```
+
+Lets a user back out of a PromptPay purchase immediately instead of waiting
+out the full 15-minute QR expiry. `:chargeId` is the same `opnChargeId` used
+for Endpoint 2.
+
+**This deletes the `CoursePurchase` row (and its `Payment`) entirely** — it
+does not just mark the payment `"Cancelled"` and leave a dead record behind
+(that was the original behavior; changed based on mobile feedback that
+"cancel" should mean the purchase never happened, not a purchase stuck in a
+cancelled state). `PaymentStatus.Cancelled` still exists as an enum value
+(used only transiently inside the cancel transaction, and kept around for
+historical/future use), but you will not see it as a persisted
+`paymentStatus` on any purchase — a cancelled purchase's row is gone, full
+stop.
+
+Response (HTTP 200):
+```jsonc
+{ "deleted": true }
+```
+
+- Only works while `status === "Pending"` — cancelling anything else
+  (`Successful`/`Failed`/`Expired`) returns HTTP 400
+  `BadRequestException: "This payment can no longer be cancelled"`. Mobile
+  should only show the cancel button when `paymentStatus === "Pending"`
+  (same gate as when Endpoint 4 shows "pay now"/QR-resume).
+- Ownership-checked like Endpoint 2 (403 if the payment isn't the caller's).
+- **This is a local-only cancellation on Omise's side** — Omise has no API to
+  invalidate a PromptPay QR early (their charge-expire endpoint explicitly
+  excludes the `promptpay` source type), so the QR image itself technically
+  stays scannable on Omise's side until its real `expires_at`. In practice
+  this is harmless: once the `Payment`/`CoursePurchase` rows are deleted,
+  there's nothing left in this system for a late scan to attach to even if
+  Omise reports the charge as paid afterward. If mobile wants to be extra
+  safe, hide the QR from the UI as soon as cancel succeeds rather than
+  relying on the QR itself becoming unscannable.
+- Any coupon applied to the cancelled purchase is automatically released
+  (see below) and can be used again on a fresh purchase.
+- If the purchase somehow already has a `Workout` booked or a `Review`
+  against it (shouldn't be reachable — both require a `Successful` payment,
+  and this only runs while still `Pending`), cancel refuses with HTTP 400
+  rather than silently deleting that history via cascade.
+
+## Coupons are released automatically on a dead-end payment
+
+A coupon selected at purchase time is marked used immediately — before a
+PromptPay charge is known to succeed. If that payment later becomes
+`"Failed"` or `"Expired"` (via webhook or Endpoint 2's reconciliation), or
+the purchase is cancelled outright (Endpoint 5), the backend automatically
+frees the coupon back up. Mobile doesn't need to do anything special here —
+a coupon that was used on a now-dead purchase will simply work again the
+next time it's sent in a fresh `purchaseAndJoin` call. (Previously this was
+a real bug: a coupon used on a failed PromptPay attempt was stuck forever
+with no way to retry using it — now fixed server-side.)
 
 ## Returning to a pending PromptPay purchase (e.g. after backgrounding the app)
 
@@ -256,7 +330,8 @@ kills the app, lets the QR expire) before scanning:
    committed immediately as `Pending`, per the PromptPay flow above).
 2. Mobile reads `paymentStatus !== "Successful"` on that row → renders it as
    "awaiting payment" (disabled booking actions, a "pay now" / "ชำระเงิน"
-   button) instead of a normal usable purchase card.
+   button, and now also a "cancel" / "ยกเลิก" button — see Endpoint 5)
+   instead of a normal usable purchase card.
 3. User taps "pay now" → call Endpoint 2 with that row's `opnChargeId`:
    - `status === "Pending"` and `qrCodeUrl` present → show that QR again,
      resume polling. No new charge is created.
@@ -268,6 +343,14 @@ kills the app, lets the QR expire) before scanning:
      call is required, which creates its own new `CoursePurchase` +
      `Payment`. (A many-payments-per-purchase model to support true
      in-place retry is a possible future schema change, out of scope here.)
+     Any coupon used on the dead attempt is already released (see above) and
+     can be reused on this fresh call. Unlike a cancel, a `Failed`/`Expired`
+     purchase row is *not* deleted — it stays as a dead record (same as
+     before); only an explicit cancel (step 4) deletes it.
+4. Alternatively, user taps "cancel" instead of "pay now" → call Endpoint 5
+   → the purchase and payment rows are deleted outright, coupon released —
+   the card disappears from Endpoint 4's list on the next fetch, rather than
+   sticking around showing a dead/cancelled state.
 
 ## What's explicitly NOT implemented (don't build UI assuming these work)
 
@@ -300,11 +383,12 @@ kills the app, lets the QR expire) before scanning:
      Card purchase, no QR screen, no polling.
 4. On any subsequent app visit, read `paymentStatus` from Endpoint 4's list
    to detect purchases still awaiting payment — see "Returning to a pending
-   PromptPay purchase" above for that flow.
+   PromptPay purchase" above for that flow, including the cancel button
+   (Endpoint 5).
 
 ## Auth
 
-All client-facing endpoints above (1, 2, 4) require the same client JWT
+All client-facing endpoints above (1, 2, 4, 5) require the same client JWT
 bearer token already used elsewhere in the app
 (`Authorization: Bearer <token>`) — no new auth mechanism was introduced.
 Endpoint 3 (webhook) is called by Omise directly and has no JWT.

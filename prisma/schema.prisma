@@ -91,6 +91,10 @@ enum PaymentStatus {
   Failed
   Expired
   Reversed
+  // Explicitly cancelled by the client before the QR's expires_at — distinct
+  // from Expired (which means the window silently ran out) since Omise has
+  // no server-side cancel for PromptPay charges; this is a local-only state.
+  Cancelled
 }
 
 enum PaymentMethod {
