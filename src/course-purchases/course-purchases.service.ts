@@ -312,6 +312,7 @@ export class CoursePurchasesService {
         course: true,
         review: { select: { id: true } },
         _count: { select: { coupons: true } },
+        payment: { select: { status: true, opnChargeId: true } },
       },
       orderBy: { purchasedAt: 'desc' },
     });
@@ -333,7 +334,7 @@ export class CoursePurchasesService {
       completedCounts.map((row) => [row.purchaseId, row._count]),
     );
 
-    return purchases.map(({ _count, review, ...purchase }) => {
+    return purchases.map(({ _count, review, payment, ...purchase }) => {
       const sessions = sessionsByPurchase.get(purchase.id);
       return {
         ...purchase,
@@ -349,6 +350,12 @@ export class CoursePurchasesService {
         completedSessions: completedByPurchaseId.get(purchase.id) ?? 0,
         couponsUsed: _count.coupons,
         hasReview: !!review,
+        // Raw DB status, not derived/expired client-side — mobile calls
+        // GET /payments/:chargeId/status (which reconciles against Omise)
+        // when the user actually wants to act on a still-Pending purchase,
+        // rather than this list endpoint guessing at staleness.
+        paymentStatus: payment?.status ?? null,
+        opnChargeId: payment?.opnChargeId ?? null,
       };
     });
   }

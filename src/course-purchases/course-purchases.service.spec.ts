@@ -277,3 +277,105 @@ describe('CoursePurchasesService.purchaseAndJoin', () => {
     });
   });
 });
+
+describe('CoursePurchasesService.findMyPurchasesUnderTrainer', () => {
+  let service: CoursePurchasesService;
+  let prisma: {
+    coursePurchase: { findMany: jest.Mock };
+    workout: { groupBy: jest.Mock };
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      coursePurchase: { findMany: jest.fn() },
+      workout: { groupBy: jest.fn().mockResolvedValue([]) },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CoursePurchasesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: CouponsService, useValue: {} },
+        { provide: ClientTrainersService, useValue: {} },
+        { provide: PaymentsService, useValue: {} },
+        { provide: OmiseService, useValue: {} },
+        {
+          provide: CoursePurchaseCalculationsService,
+          useValue: {
+            computeRemainingSessions: jest.fn().mockResolvedValue(new Map()),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get(CoursePurchasesService);
+  });
+
+  it('surfaces paymentStatus/opnChargeId from the related Payment row', async () => {
+    prisma.coursePurchase.findMany.mockResolvedValue([
+      {
+        id: 'purchase-pending',
+        clientId: CLIENT_ID,
+        courseId: COURSE_ID,
+        purchasedAt: new Date(),
+        course: { id: COURSE_ID, sessions: 10 },
+        review: null,
+        _count: { coupons: 0 },
+        payment: {
+          status: PaymentStatus.Pending,
+          opnChargeId: 'chrg_test_pending',
+        },
+      },
+      {
+        id: 'purchase-paid',
+        clientId: CLIENT_ID,
+        courseId: COURSE_ID,
+        purchasedAt: new Date(),
+        course: { id: COURSE_ID, sessions: 10 },
+        review: null,
+        _count: { coupons: 0 },
+        payment: {
+          status: PaymentStatus.Successful,
+          opnChargeId: 'chrg_test_paid',
+        },
+      },
+    ]);
+
+    const result = await service.findMyPurchasesUnderTrainer(CLIENT_ID);
+
+    expect(result[0]).toMatchObject({
+      id: 'purchase-pending',
+      paymentStatus: PaymentStatus.Pending,
+      opnChargeId: 'chrg_test_pending',
+    });
+    expect(result[1]).toMatchObject({
+      id: 'purchase-paid',
+      paymentStatus: PaymentStatus.Successful,
+      opnChargeId: 'chrg_test_paid',
+    });
+    // Never leak the nested Payment object itself — only the flattened fields.
+    expect(result[0]).not.toHaveProperty('payment');
+  });
+
+  it('returns null paymentStatus/opnChargeId when a purchase has no Payment row', async () => {
+    prisma.coursePurchase.findMany.mockResolvedValue([
+      {
+        id: 'purchase-no-payment',
+        clientId: CLIENT_ID,
+        courseId: COURSE_ID,
+        purchasedAt: new Date(),
+        course: { id: COURSE_ID, sessions: 10 },
+        review: null,
+        _count: { coupons: 0 },
+        payment: null,
+      },
+    ]);
+
+    const result = await service.findMyPurchasesUnderTrainer(CLIENT_ID);
+
+    expect(result[0]).toMatchObject({
+      paymentStatus: null,
+      opnChargeId: null,
+    });
+  });
+});

@@ -70,6 +70,30 @@ describe('PaymentsService', () => {
   });
 
   describe('getStatus', () => {
+    it('re-derives qrCodeUrl/expiresAt from Omise when still Pending', async () => {
+      const payment = makePayment({ status: PaymentStatus.Pending });
+      prisma.payment.findUnique.mockResolvedValue(payment);
+      omiseService.retrieveCharge.mockResolvedValue({
+        id: CHARGE_ID,
+        status: 'pending',
+        expires_at: '2026-09-19T12:15:00Z',
+        source: {
+          scannable_code: {
+            image: { download_uri: 'https://example.com/qr.png' },
+          },
+        },
+      });
+
+      const result = await service.getStatus(CHARGE_ID, CLIENT_ID);
+
+      expect(result.status).toBe(PaymentStatus.Pending);
+      expect(result).toMatchObject({
+        qrCodeUrl: 'https://example.com/qr.png',
+        expiresAt: '2026-09-19T12:15:00Z',
+      });
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
     it('reconciles against Omise and updates the status when still Pending', async () => {
       const payment = makePayment({ status: PaymentStatus.Pending });
       prisma.payment.findUnique.mockResolvedValue(payment);

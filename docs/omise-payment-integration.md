@@ -11,7 +11,8 @@ Backend repo root: `/Users/be8-thanachaiw/Desktop/Project/Learning/My App/FitCoa
 - `src/course-purchases/dto/purchase-and-join.dto.ts` — request body shape
 - `src/course-purchases/course-purchases.service.ts` — `purchaseAndJoin()`,
   `purchaseAndJoinWithoutPayment()`, `purchaseAndJoinWithCard()`,
-  `purchaseAndJoinWithPromptPay()`, `ensureUsable()`
+  `purchaseAndJoinWithPromptPay()`, `ensureUsable()`,
+  `findMyPurchasesUnderTrainer()`
 - `src/payments/payments.controller.ts` — all payment-related routes
 - `src/payments/payments.service.ts` — `getStatus()`, `handleWebhookEvent()`
 - `src/payments/omise.service.ts` — Omise SDK wrapper (backend-only, not
@@ -171,8 +172,20 @@ Response:
   "status": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed",
   "paidAt": "2026-09-19T12:00:00Z" | null,
   "failureMessage": "การชำระเงินไม่สำเร็จ..." // only present if Failed/Expired
+  // only present while status === "Pending" (i.e. only ever for a
+  // PromptPay charge; Card charges never stay Pending):
+  "qrCodeUrl": "https://api.omise.co/.../download",
+  "expiresAt": "2026-09-19T12:34:56Z"
 }
 ```
+
+`qrCodeUrl`/`expiresAt` are **re-fetched from Omise on every call while
+Pending**, not stored — this lets you re-show the exact same QR when the user
+navigates back to a course they haven't finished paying for yet (see the
+"returning to a pending purchase" flow below), without creating a new charge
+each time. Once `status` moves past `Pending` (`Successful`/`Failed`/
+`Expired`/`Reversed`), these two fields are omitted entirely — there's
+nothing left to scan.
 
 Suggested polling interval: every 2-3 seconds while `status === "Pending"`,
 stop once it's any other value. This endpoint is ownership-checked (403 if
@@ -192,6 +205,69 @@ mobile understands *why* polling (Endpoint 2) is the reliable signal to use
 instead of e.g. assuming a push notification will arrive — **there is no push
 notification for payment completion in this backend today.** No FCM/APNs
 wiring exists for this flow. Poll for status.
+
+## Endpoint 4 — Course purchases list now includes payment status
+
+```
+GET /api/v1/users/me/course-purchases[?trainerId=<uuid>]
+Authorization: Bearer <client JWT>
+```
+
+(Route/query param unchanged — only the response shape gained two new fields
+per purchase, backed by `CoursePurchasesService.findMyPurchasesUnderTrainer`.)
+
+Each purchase row now includes:
+```jsonc
+{
+  "id": "...",
+  "course": { /* ... */ },
+  "remainingSessions": 10,
+  // NEW:
+  "paymentStatus": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed" | null,
+  "opnChargeId": "chrg_test_..." | null
+}
+```
+
+- `paymentStatus` is the **raw DB value** — it is not reconciled against
+  Omise here (that would mean an Omise API call per row in a list endpoint).
+  If a PromptPay charge actually expired hours ago but nobody ever polled
+  Endpoint 2 or the webhook never arrived, this list can still show
+  `"Pending"` momentarily stale. That's expected — call Endpoint 2 (which
+  does reconcile) when the user actually taps into a pending purchase, not
+  from this list endpoint.
+- `paymentStatus`/`opnChargeId` are `null` together only in the edge case of
+  a purchase with no `Payment` row at all (shouldn't happen via the normal
+  purchase flow today, but the field is nullable defensively).
+- Use `paymentStatus !== "Successful"` as the signal to disable
+  booking-related actions on that course card and show a "pay now" button
+  instead — mirrors the server-side gate already enforced in `ensureUsable()`
+  (booking a workout throws `BadRequestException` if the purchase's payment
+  isn't `Successful`), so this is UI-side defense-in-depth, not the actual
+  enforcement.
+- Use `opnChargeId` directly as `:chargeId` for Endpoint 2 — no separate
+  lookup needed.
+
+## Returning to a pending PromptPay purchase (e.g. after backgrounding the app)
+
+If a user starts a PromptPay purchase, sees the QR, then leaves (backs out,
+kills the app, lets the QR expire) before scanning:
+
+1. The purchase still shows up in Endpoint 4's list (course purchases are
+   committed immediately as `Pending`, per the PromptPay flow above).
+2. Mobile reads `paymentStatus !== "Successful"` on that row → renders it as
+   "awaiting payment" (disabled booking actions, a "pay now" / "ชำระเงิน"
+   button) instead of a normal usable purchase card.
+3. User taps "pay now" → call Endpoint 2 with that row's `opnChargeId`:
+   - `status === "Pending"` and `qrCodeUrl` present → show that QR again,
+     resume polling. No new charge is created.
+   - `status === "Failed"` or `"Expired"` → tell the user this attempt is
+     dead and they need to purchase again from scratch (new call to
+     Endpoint 1). **There is no retry-in-place for an existing purchase** —
+     `Payment.purchaseId` is a unique 1:1 relation in the schema, so a dead
+     `Payment` can't be replaced with a new charge; a fresh `purchaseAndJoin`
+     call is required, which creates its own new `CoursePurchase` +
+     `Payment`. (A many-payments-per-purchase model to support true
+     in-place retry is a possible future schema change, out of scope here.)
 
 ## What's explicitly NOT implemented (don't build UI assuming these work)
 
@@ -222,9 +298,13 @@ wiring exists for this flow. Poll for status.
    - **Absent** → this was actually a free/trial course purchase (amount 0);
      `payment.status` is already `"Successful"` — treat it like a successful
      Card purchase, no QR screen, no polling.
+4. On any subsequent app visit, read `paymentStatus` from Endpoint 4's list
+   to detect purchases still awaiting payment — see "Returning to a pending
+   PromptPay purchase" above for that flow.
 
 ## Auth
 
-Both endpoints require the same client JWT bearer token already used
-elsewhere in the app (`Authorization: Bearer <token>`) — no new auth
-mechanism was introduced.
+All client-facing endpoints above (1, 2, 4) require the same client JWT
+bearer token already used elsewhere in the app
+(`Authorization: Bearer <token>`) — no new auth mechanism was introduced.
+Endpoint 3 (webhook) is called by Omise directly and has no JWT.

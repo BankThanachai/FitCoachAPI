@@ -239,10 +239,16 @@ export class PaymentsService {
     const status = this.mapOpnStatus(verifiedCharge.status);
 
     if (!status || status === payment.status) {
+      // Lets the client re-show the same QR (e.g. after navigating back to
+      // the purchase list and tapping "pay now" again) instead of creating a
+      // redundant charge — qrCodeUrl is never persisted, so it's re-derived
+      // from Omise here rather than added as a new column.
       return {
         status: payment.status,
         paidAt: payment.paidAt,
         failureMessage: payment.failureMessage,
+        qrCodeUrl: verifiedCharge.source?.scannable_code?.image?.download_uri,
+        expiresAt: verifiedCharge.expires_at,
       };
     }
 
