@@ -124,9 +124,13 @@ model User {
   rating                  Float                   @default(0)
   acceptsPartnerWork      Boolean                 @default(false)
   profilePhotoKey         String?
+  emailVerifiedAt         DateTime?
+  phoneVerifiedAt         DateTime?
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
   refreshTokens           RefreshToken[]
+  emailOtps               EmailOtp[]
+  phoneOtps               PhoneOtp[]
   reviewsWritten          Review[]                @relation("ReviewsWritten")
   reviewsReceived         Review[]                @relation("ReviewsReceived")
   exercisesAssigned       Exercise[]              @relation("ExercisesAssigned")
@@ -172,6 +176,32 @@ model RefreshToken {
   expiresAt DateTime
   revokedAt DateTime?
   createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model EmailOtp {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model PhoneOtp {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
 
   @@index([userId])
 }

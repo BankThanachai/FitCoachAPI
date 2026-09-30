@@ -10,3 +10,6 @@ dist
 /secrets/
 
 /generated/prisma
+
+# Salesforce CLI local org cache — machine-specific, not project source
+.sf/

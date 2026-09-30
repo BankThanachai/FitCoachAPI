@@ -12,6 +12,7 @@ import {
   User,
   UserType,
 } from '../../generated/prisma/client';
+import { AuthService } from '../auth/auth.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { withFullName } from '../shared/name.util';
@@ -44,6 +45,7 @@ export class UsersService {
     private readonly workingHoursService: WorkingHoursService,
     private readonly couponsService: CouponsService,
     private readonly r2Service: R2Service,
+    private readonly authService: AuthService,
   ) {}
 
   /** Adds computed `profilePhotoUrl` and `name` (firstName + lastName) fields to a user. */
@@ -97,6 +99,8 @@ export class UsersService {
       if (user.type === UserType.Trainer) {
         await this.workingHoursService.create(user.id, {});
       }
+
+      await this.authService.sendEmailOtp(user.id);
 
       return this.withComputedFields(excludePassword(user));
     } catch (error) {
@@ -192,9 +196,23 @@ export class UsersService {
 
   async findOne(id: string) {
     const user = await this.ensureUserExists(id);
+    // Mobile gates screens on these booleans (e.g. VerifyGateScreen) — it
+    // doesn't read emailVerifiedAt/phoneVerifiedAt (raw timestamp or null)
+    // directly, so both need to be present here as `true`/`false`. This
+    // mirrors what /auth/login already returns after a fresh login; findOne
+    // is what refreshes that status afterwards (e.g. right after verifying
+    // an OTP), so it needs to report it too.
+    const verification = {
+      emailVerified: !!user.emailVerifiedAt,
+      phoneVerified: !!user.phoneVerifiedAt,
+    };
 
     if (user.type !== UserType.Trainer) {
-      return { ...this.withComputedFields(excludePassword(user)), workingHours: [] };
+      return {
+        ...this.withComputedFields(excludePassword(user)),
+        ...verification,
+        workingHours: [],
+      };
     }
 
     const [workingHours, aggregate, totalClients] = await Promise.all([
@@ -210,6 +228,7 @@ export class UsersService {
 
     return {
       ...this.withComputedFields(excludePassword(user)),
+      ...verification,
       workingHours,
       averageScore: roundScore(aggregate._avg.score),
       totalClients,
@@ -274,7 +293,15 @@ export class UsersService {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'
     ) {
-      return new ConflictException('Email or phone is already in use');
+      // Deliberately doesn't say "already in use" or name which field
+      // (email vs phone) conflicted — that would let someone probe a list
+      // of emails/phones against this endpoint to find out which ones are
+      // registered. The client can't recover from this any differently
+      // than from an unclear-cause failure, so nothing is lost by keeping
+      // it vague.
+      return new ConflictException(
+        'Unable to register with the provided information',
+      );
     }
     return error;
   }
