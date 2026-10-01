@@ -1,4 +1,13 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { AuthThrottlerGuard } from '../shared/auth-throttler.guard';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -7,6 +16,17 @@ import { ResendPhoneOtpDto } from './dto/resend-phone-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
 
+// Rate-limited per IP (10 requests/minute, then blocked for 30 minutes —
+// see the 'auth' throttler in AppModule) on every route in this
+// controller. This is on top of, not instead of, AuthService's per-account
+// login lockout — the IP limit stops one IP from hammering many accounts
+// (credential stuffing) or spamming OTP sends; the account lockout stops
+// repeated guesses against one specific account regardless of which IP
+// they come from. Must match AppModule's ThrottlerModule.forRoot config —
+// @Throttle here overrides it per-route, so a mismatch would silently
+// apply different limits than the ones documented for mobile.
+@UseGuards(AuthThrottlerGuard)
+@Throttle({ auth: { ttl: 60_000, limit: 10, blockDuration: 30 * 60_000 } })
 @Controller({ path: 'auth', version: '1' })
 export class AuthController {
   constructor(private readonly authService: AuthService) {}

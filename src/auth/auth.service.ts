@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   NotFoundException,
@@ -19,8 +21,13 @@ import { JwtPayload } from './types/jwt-payload.type';
 const REFRESH_TOKEN_BYTES = 64;
 const OTP_LENGTH = 6;
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
-const OTP_MAX_ATTEMPTS = 5;
+const OTP_MAX_ATTEMPTS = 3;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const OTP_LOCKOUT_MS = 5 * 60 * 1000;
+const OTP_LOCKOUT_MESSAGE =
+  'Too many failed verification attempts. Try again later.';
+const LOGIN_MAX_ATTEMPTS = 3;
+const LOGIN_LOCKOUT_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
@@ -36,7 +43,41 @@ export class AuthService {
       where: this.resolveIdentifier(loginDto.identifier),
     });
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      // Same body shape (including attemptsRemaining) as a wrong password
+      // on a real account's first attempt, below — a response that were
+      // missing the field here would let an attacker tell "no such
+      // account" apart from "account exists, wrong password" purely from
+      // whether attemptsRemaining is present, defeating the generic
+      // "Invalid credentials" message's purpose.
+      throw new UnauthorizedException({
+        statusCode: HttpStatus.UNAUTHORIZED,
+        message: 'Invalid credentials',
+        attemptsRemaining: LOGIN_MAX_ATTEMPTS - 1,
+      });
+    }
+
+    // Checked before touching the password at all: if this account is
+    // already locked out, don't let a request "use up" a password check —
+    // that would let an attacker distinguish "locked, and this guess would
+    // have been right" from "locked, wrong guess" by timing/side channels,
+    // and there's no reason to bcrypt.compare at all once we already know
+    // the request can't succeed.
+    let failedLoginAttempts = user.failedLoginAttempts;
+    if (user.lockedUntil) {
+      if (user.lockedUntil > new Date()) {
+        this.throwLockedException(user.lockedUntil);
+      }
+      // The lock has expired, but failedLoginAttempts was left at the
+      // threshold (3) when it was set — without clearing it here, the
+      // very next wrong guess would re-lock the account immediately
+      // (currentAttempts 3 + 1 >= LOGIN_MAX_ATTEMPTS), not after another
+      // 3 in a row. A new lockout cycle needs to start from a clean slate,
+      // same as a successful login already resets it to further down.
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: 0, lockedUntil: null },
+      });
+      failedLoginAttempts = 0;
     }
 
     const passwordMatches = await bcrypt.compare(
@@ -44,7 +85,18 @@ export class AuthService {
       user.password,
     );
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid credentials');
+      await this.registerFailedLogin(user.id, failedLoginAttempts);
+    }
+
+    if (failedLoginAttempts > 0) {
+      // Any correct login clears a prior streak of failed attempts —
+      // otherwise a legitimate user who mistyped their password a couple
+      // of times would stay one mistake away from a lockout indefinitely.
+      // (Already 0 here if the stale-lock cleanup above just ran.)
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: 0, lockedUntil: null },
+      });
     }
 
     if (loginDto.fcmToken) {
@@ -66,6 +118,58 @@ export class AuthService {
     };
   }
 
+  // Records a wrong password against this account. On the 3rd consecutive
+  // failure it locks the account for LOGIN_LOCKOUT_MS and throws the same
+  // 429 a currently-locked account gets — so the caller that just hit the
+  // threshold finds out immediately, in the same response, rather than
+  // being told "invalid credentials" and only discovering the lockout on
+  // their next attempt.
+  private async registerFailedLogin(userId: string, currentAttempts: number) {
+    const attempts = currentAttempts + 1;
+
+    if (attempts >= LOGIN_MAX_ATTEMPTS) {
+      const lockedUntil = new Date(Date.now() + LOGIN_LOCKOUT_MS);
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { failedLoginAttempts: attempts, lockedUntil },
+      });
+      this.throwLockedException(lockedUntil);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { failedLoginAttempts: attempts },
+    });
+    // attemptsRemaining lets the client show "N tries left" without
+    // tracking the count itself — it would otherwise have no way to know
+    // the server's count (e.g. after a reinstall, or a previous wrong
+    // guess from a different device) and could drift from what the
+    // backend actually enforces.
+    throw new UnauthorizedException({
+      statusCode: HttpStatus.UNAUTHORIZED,
+      message: 'Invalid credentials',
+      attemptsRemaining: LOGIN_MAX_ATTEMPTS - attempts,
+    });
+  }
+
+  private throwLockedException(
+    lockedUntil: Date,
+    message = 'Too many failed login attempts. Try again later.',
+  ): never {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((lockedUntil.getTime() - Date.now()) / 1000),
+    );
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message,
+        retryAfterSeconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
   // A Thai phone number is stored as 0XXXXXXXXX (10 digits); anything
   // containing "@" is treated as an email. No other identifier shape is
   // accepted — class-validator only guarantees `identifier` is a non-empty
@@ -84,6 +188,16 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException(`User with id ${userId} not found`);
+    }
+
+    // A locked-out account can't get a fresh code either — otherwise
+    // resend would be a way around the lock (burn through 5 attempts,
+    // immediately resend to reset the attempt counter on a fresh row, and
+    // the lock itself would never actually stop anyone). This also runs
+    // on UsersService.create()'s auto-send path, but a brand-new user can
+    // never already have emailOtpLockedUntil set, so it's a no-op there.
+    if (user.emailOtpLockedUntil && user.emailOtpLockedUntil > new Date()) {
+      this.throwLockedException(user.emailOtpLockedUntil, OTP_LOCKOUT_MESSAGE);
     }
 
     const latest = await this.prisma.emailOtp.findFirst({
@@ -144,6 +258,14 @@ export class AuthService {
       throw new NotFoundException(`User with id ${userId} not found`);
     }
 
+    // A locked-out account can't get a fresh code either — otherwise
+    // resend would be a way around the lock (burn through 5 attempts,
+    // immediately resend to reset the attempt counter on a fresh row, and
+    // the lock itself would never actually stop anyone).
+    if (user.phoneOtpLockedUntil && user.phoneOtpLockedUntil > new Date()) {
+      this.throwLockedException(user.phoneOtpLockedUntil, OTP_LOCKOUT_MESSAGE);
+    }
+
     const latest = await this.prisma.phoneOtp.findFirst({
       where: { userId, consumedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -195,34 +317,59 @@ export class AuthService {
   async verifyPhoneOtp(phone: string, code: string) {
     const user = await this.prisma.user.findUnique({ where: { phone } });
     if (!user) {
-      throw new BadRequestException('Invalid or expired code');
+      // Same body shape (including attemptsRemaining) as a wrong code on a
+      // real, freshly-sent OTP below — see the comment there.
+      throw new BadRequestException({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Invalid or expired code',
+        attemptsRemaining: OTP_MAX_ATTEMPTS,
+      });
     }
     if (user.phoneVerifiedAt) {
       return { verified: true };
+    }
+    if (user.phoneOtpLockedUntil && user.phoneOtpLockedUntil > new Date()) {
+      this.throwLockedException(user.phoneOtpLockedUntil, OTP_LOCKOUT_MESSAGE);
     }
 
     const otp = await this.prisma.phoneOtp.findFirst({
       where: { userId: user.id, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
-    // Same generic message for every failure path (no OTP row, expired,
-    // attempt cap hit, or wrong code) — a distinguishable response for any
+    // Same generic message and body shape for every failure path (no OTP
+    // row, expired, or wrong code) — a distinguishable response for any
     // one of these would let an attacker fingerprint which phone numbers
-    // are registered or how close a guess landed.
-    if (
-      !otp ||
-      otp.expiresAt < new Date() ||
-      otp.attempts >= OTP_MAX_ATTEMPTS
-    ) {
-      throw new BadRequestException('Invalid or expired code');
+    // are registered or how close a guess landed. No pending/expired code
+    // reports a full attemptsRemaining (OTP_MAX_ATTEMPTS) since no attempt
+    // has actually been consumed against it.
+    if (!otp || otp.expiresAt < new Date()) {
+      throw new BadRequestException({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Invalid or expired code',
+        attemptsRemaining: OTP_MAX_ATTEMPTS,
+      });
+    }
+    // Belt-and-suspenders alongside the phoneOtpLockedUntil check above:
+    // that check only catches an active lock. If the 5-minute lock has
+    // since expired but this same OTP row (created before the lock) is
+    // still around with attempts already at the cap, it must not accept
+    // guesses again just because the lock's clock ran out — the code
+    // itself stays dead until a fresh one is requested via resend.
+    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+      throw new BadRequestException({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Invalid or expired code',
+        attemptsRemaining: 0,
+      });
     }
 
     if (this.hashToken(code) !== otp.codeHash) {
-      await this.prisma.phoneOtp.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-      });
-      throw new BadRequestException('Invalid or expired code');
+      await this.registerFailedOtpAttempt(
+        this.prisma.phoneOtp,
+        otp.id,
+        user.id,
+        'phoneOtpLockedUntil',
+      );
     }
 
     await this.prisma.$transaction([
@@ -242,34 +389,59 @@ export class AuthService {
   async verifyEmailOtp(email: string, code: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
-      throw new BadRequestException('Invalid or expired code');
+      // Same body shape (including attemptsRemaining) as a wrong code on a
+      // real, freshly-sent OTP below — see the comment there.
+      throw new BadRequestException({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Invalid or expired code',
+        attemptsRemaining: OTP_MAX_ATTEMPTS,
+      });
     }
     if (user.emailVerifiedAt) {
       return { verified: true };
+    }
+    if (user.emailOtpLockedUntil && user.emailOtpLockedUntil > new Date()) {
+      this.throwLockedException(user.emailOtpLockedUntil, OTP_LOCKOUT_MESSAGE);
     }
 
     const otp = await this.prisma.emailOtp.findFirst({
       where: { userId: user.id, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
-    // Same generic message for every failure path (no OTP row, expired,
-    // attempt cap hit, or wrong code) — a distinguishable response for any
+    // Same generic message and body shape for every failure path (no OTP
+    // row, expired, or wrong code) — a distinguishable response for any
     // one of these would let an attacker fingerprint which emails are
-    // registered or how close a guess landed.
-    if (
-      !otp ||
-      otp.expiresAt < new Date() ||
-      otp.attempts >= OTP_MAX_ATTEMPTS
-    ) {
-      throw new BadRequestException('Invalid or expired code');
+    // registered or how close a guess landed. No pending/expired code
+    // reports a full attemptsRemaining (OTP_MAX_ATTEMPTS) since no attempt
+    // has actually been consumed against it.
+    if (!otp || otp.expiresAt < new Date()) {
+      throw new BadRequestException({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Invalid or expired code',
+        attemptsRemaining: OTP_MAX_ATTEMPTS,
+      });
+    }
+    // Belt-and-suspenders alongside the emailOtpLockedUntil check above:
+    // that check only catches an active lock. If the 5-minute lock has
+    // since expired but this same OTP row (created before the lock) is
+    // still around with attempts already at the cap, it must not accept
+    // guesses again just because the lock's clock ran out — the code
+    // itself stays dead until a fresh one is requested via resend.
+    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+      throw new BadRequestException({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Invalid or expired code',
+        attemptsRemaining: 0,
+      });
     }
 
     if (this.hashToken(code) !== otp.codeHash) {
-      await this.prisma.emailOtp.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-      });
-      throw new BadRequestException('Invalid or expired code');
+      await this.registerFailedOtpAttempt(
+        this.prisma.emailOtp,
+        otp.id,
+        user.id,
+        'emailOtpLockedUntil',
+      );
     }
 
     await this.prisma.$transaction([
@@ -284,6 +456,49 @@ export class AuthService {
     ]);
 
     return { verified: true };
+  }
+
+  // Shared by verifyEmailOtp/verifyPhoneOtp: records a wrong OTP code
+  // against the OTP row, and on the 5th consecutive wrong attempt locks
+  // the account (the same channel-specific field on User the corresponding
+  // sendXxxOtp checks) for OTP_LOCKOUT_MS — mirroring registerFailedLogin's
+  // shape for the login lockout. Always throws (never a wrong code without
+  // rejecting the request), so callers don't fall through afterward.
+  private async registerFailedOtpAttempt(
+    otpDelegate: {
+      update: (args: unknown) => Promise<{ attempts: number }>;
+    },
+    otpId: string,
+    userId: string,
+    lockField: 'emailOtpLockedUntil' | 'phoneOtpLockedUntil',
+  ): Promise<never> {
+    // Atomic increment at the DB level (attempts = attempts + 1), rather
+    // than reading currentAttempts and computing attempts + 1 here — two
+    // concurrent wrong guesses would otherwise both read the same starting
+    // value and one increment could clobber the other, undercounting
+    // attempts and letting the lock threshold be missed.
+    const { attempts } = await otpDelegate.update({
+      where: { id: otpId },
+      data: { attempts: { increment: 1 } },
+    });
+
+    if (attempts >= OTP_MAX_ATTEMPTS) {
+      const lockedUntil = new Date(Date.now() + OTP_LOCKOUT_MS);
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { [lockField]: lockedUntil },
+      });
+      this.throwLockedException(lockedUntil, OTP_LOCKOUT_MESSAGE);
+    }
+
+    // attemptsRemaining mirrors what registerFailedLogin already returns
+    // for a wrong password — lets the client show "N tries left" without
+    // tracking the count itself.
+    throw new BadRequestException({
+      statusCode: HttpStatus.BAD_REQUEST,
+      message: 'Invalid or expired code',
+      attemptsRemaining: OTP_MAX_ATTEMPTS - attempts,
+    });
   }
 
   private async saveDeviceToken(userId: string, token: string) {

@@ -20,6 +20,10 @@ response shapes mobile reads to decide which screen to show next.
 - **`GET /users/:id` also returns `emailVerified`/`phoneVerified`** — use
   this to re-check status anywhere other than right after login (e.g. a
   verify-gate screen on app reopen).
+- **Wrong passwords and wrong OTP codes both get locked out**, and
+  `/auth/*` is also rate-limited per IP — see
+  [auth-lockout-and-rate-limits.md](auth-lockout-and-rate-limits.md) for
+  every threshold and penalty in one place.
 
 ## Endpoints
 
@@ -140,6 +144,11 @@ client responsibility.
 `POST /auth/refresh` does **not** return these flags — it only returns
 `{ accessToken, refreshToken }`, same as before. If you need current
 verification status after a refresh, call `GET /users/:id`.
+
+For what happens after 3 wrong passwords in a row (or too many wrong OTP
+codes, or too many requests from one IP), see
+[auth-lockout-and-rate-limits.md](auth-lockout-and-rate-limits.md) —
+that's a separate concern from the verification flow this doc covers.
 
 ## `GET /users/:id` verification fields
 
