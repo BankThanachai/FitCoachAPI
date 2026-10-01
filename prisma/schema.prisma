@@ -169,6 +169,7 @@ model BankAccount {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@unique([bankName, accountNumber])
   @@index([userId])
 }
 
