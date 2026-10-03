@@ -362,8 +362,33 @@ export class CoursePurchasesService {
     });
   }
 
-  async ensureUsable(purchaseId: string, clientId: string, trainerId: string) {
-    const purchase = await this.prisma.coursePurchase.findUnique({
+  /**
+   * Checks that the purchase can be used to book one more session, and takes
+   * its row lock so that stays true until the caller's transaction ends. Call
+   * it inside the same transaction that inserts the Workout: the "sessions
+   * used" count is read after the lock, so two bookings against one purchase
+   * are applied one after the other — the second sees the first's workout —
+   * instead of both reading the same count and both passing. (Under READ
+   * COMMITTED, the default, the statements after the lock run once the
+   * earlier transaction has committed.)
+   *
+   * The lock is FOR NO KEY UPDATE for the same reason as in
+   * refreshTrainerRating: it doesn't conflict with the KEY SHARE locks that
+   * inserting a Workout, Review or Payment row takes on this row through
+   * their foreign keys. It also only matches the caller's own purchase
+   * (clientId in the WHERE), so a request naming someone else's purchase
+   * never queues behind — or blocks — that person's bookings; the ownership
+   * check below then rejects it.
+   */
+  async ensureUsable(
+    tx: Prisma.TransactionClient,
+    purchaseId: string,
+    clientId: string,
+    trainerId: string,
+  ) {
+    await tx.$queryRaw`SELECT "id" FROM "CoursePurchase" WHERE "id" = ${purchaseId} AND "clientId" = ${clientId} FOR NO KEY UPDATE`;
+
+    const purchase = await tx.coursePurchase.findUnique({
       where: { id: purchaseId },
       include: { course: true, payment: true },
     });
@@ -393,9 +418,10 @@ export class CoursePurchasesService {
     }
 
     const remaining =
-      await this.coursePurchaseCalculationsService.computeRemainingSessions([
-        purchaseId,
-      ]);
+      await this.coursePurchaseCalculationsService.computeRemainingSessions(
+        [purchaseId],
+        tx,
+      );
     const remainingSessions = remaining.get(purchaseId)?.remainingSessions ?? 0;
     if (remainingSessions <= 0) {
       throw new BadRequestException(

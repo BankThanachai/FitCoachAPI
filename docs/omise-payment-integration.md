@@ -264,6 +264,12 @@ Each purchase row now includes:
   `clientId`: a different `clientId` in the body returns `403 Forbidden`
   ("You can only book workouts for yourself"). The field is still required
   in the body, so the mobile request shape is unchanged.
+- Bookings against the same purchase are applied one at a time: the quota
+  check and the workout insert run in one transaction under the purchase's
+  row lock, so parallel `POST /workouts` requests can't book more sessions
+  than were paid for — the extra ones get the usual `400` "No remaining
+  sessions left on this course purchase". Bookings on different purchases
+  don't wait for each other.
 - Use `opnChargeId` directly as `:chargeId` for Endpoint 2 — no separate
   lookup needed.
 - **A cancelled purchase (Endpoint 5) simply disappears from this list** —

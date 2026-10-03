@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { WorkoutStatus } from '../../generated/prisma/client';
+import { Prisma, WorkoutStatus } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -20,14 +20,21 @@ export class CoursePurchaseCalculationsService {
    * This is the single source of truth for these numbers —
    * CoursePurchasesService and ClientTrainersService both depend on it via
    * SharedModule; do not duplicate this logic elsewhere.
+   *
+   * `client` defaults to the shared client. Pass the enclosing transaction's
+   * client when the numbers must be read inside it — e.g. after taking a
+   * purchase's row lock — so the counts come from the same transaction.
    */
-  async computeRemainingSessions(purchaseIds: string[]) {
-    const purchases = await this.prisma.coursePurchase.findMany({
+  async computeRemainingSessions(
+    purchaseIds: string[],
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
+    const purchases = await client.coursePurchase.findMany({
       where: { id: { in: purchaseIds } },
       include: { course: true, coupons: { include: { coupon: true } } },
     });
 
-    const usedCounts = await this.prisma.workout.groupBy({
+    const usedCounts = await client.workout.groupBy({
       by: ['purchaseId'],
       where: {
         purchaseId: { in: purchaseIds },

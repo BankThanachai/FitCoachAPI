@@ -186,21 +186,30 @@ export class WorkoutsService {
       toTime,
     );
 
-    await this.coursePurchasesService.ensureUsable(
-      createWorkoutDto.purchaseId,
-      createWorkoutDto.clientId,
-      createWorkoutDto.trainerId,
-    );
+    // The quota check and the insert must be one atomic step: ensureUsable()
+    // locks the purchase row and counts the sessions already used, and the
+    // lock is held until this transaction commits. Checking and inserting as
+    // separate steps would let parallel requests all read the same "used"
+    // count and book more sessions than were paid for. Notifying stays
+    // outside, after the commit.
+    const workout = await this.prisma.$transaction(async (tx) => {
+      await this.coursePurchasesService.ensureUsable(
+        tx,
+        createWorkoutDto.purchaseId,
+        createWorkoutDto.clientId,
+        createWorkoutDto.trainerId,
+      );
 
-    const workout = await this.prisma.workout.create({
-      data: {
-        trainerId: createWorkoutDto.trainerId,
-        clientId: createWorkoutDto.clientId,
-        purchaseId: createWorkoutDto.purchaseId,
-        date,
-        fromTime,
-        toTime,
-      },
+      return tx.workout.create({
+        data: {
+          trainerId: createWorkoutDto.trainerId,
+          clientId: createWorkoutDto.clientId,
+          purchaseId: createWorkoutDto.purchaseId,
+          date,
+          fromTime,
+          toTime,
+        },
+      });
     });
 
     await this.notificationsService.create({
