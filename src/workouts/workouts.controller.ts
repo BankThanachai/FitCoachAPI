@@ -32,11 +32,6 @@ export class WorkoutsController {
     return this.workoutsService.create(createWorkoutDto);
   }
 
-  @Get()
-  findAll() {
-    return this.workoutsService.findAll();
-  }
-
   @Get('client')
   findByClient(
     @Req() request: Request & { user: JwtPayload },

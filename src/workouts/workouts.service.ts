@@ -207,14 +207,6 @@ export class WorkoutsService {
     return this.serialize(workout);
   }
 
-  async findAll() {
-    const workouts = await this.prisma.workout.findMany({
-      include: WORKOUT_INCLUDE,
-      orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
-    });
-    return workouts.map((workout) => this.serialize(workout));
-  }
-
   async findByClient(
     clientId: string,
     page: number,
