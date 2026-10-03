@@ -12,7 +12,6 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CoursePurchasesService } from './course-purchases.service';
-import { CreateCoursePurchaseDto } from './dto/create-course-purchase.dto';
 import { FindMyCoursePurchasesDto } from './dto/find-my-course-purchases.dto';
 import { PurchaseAndJoinDto } from './dto/purchase-and-join.dto';
 
@@ -22,19 +21,6 @@ export class CoursePurchasesController {
   constructor(
     private readonly coursePurchasesService: CoursePurchasesService,
   ) {}
-
-  @Post('trainer-courses/:courseId/purchase')
-  purchase(
-    @Req() request: Request & { user: JwtPayload },
-    @Param('courseId') courseId: string,
-    @Body() createCoursePurchaseDto: CreateCoursePurchaseDto,
-  ) {
-    return this.coursePurchasesService.purchase(
-      request.user.sub,
-      courseId,
-      createCoursePurchaseDto,
-    );
-  }
 
   @Post('trainer-courses/:courseId/purchase-and-join')
   purchaseAndJoin(

@@ -207,17 +207,6 @@ describe('CoursePurchasesService.purchaseAndJoin', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('cannot be bought with purchase either', async () => {
-      await expect(
-        service.purchase(CLIENT_ID, COURSE_ID, { couponIds: [] }),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({
-          code: 'TRAINER_INACTIVE',
-        }) as unknown,
-      });
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-    });
-
     it("does not change what an Active trainer's course returns: the trainer relation never leaks into the course", async () => {
       prisma.trainerCourse.findUnique.mockResolvedValue(makeCourse({}));
 

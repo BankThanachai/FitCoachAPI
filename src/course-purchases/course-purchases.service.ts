@@ -18,7 +18,6 @@ import { OmiseService } from '../payments/omise.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
-import { CreateCoursePurchaseDto } from './dto/create-course-purchase.dto';
 import { PurchaseAndJoinDto } from './dto/purchase-and-join.dto';
 
 @Injectable()
@@ -54,8 +53,8 @@ export class CoursePurchasesService {
     const { trainer, ...course } = courseWithTrainer;
 
     // A deactivated trainer's courses can still be viewed, but no new purchase
-    // can be made against them. Both purchase() and purchaseAndJoin() come
-    // through here, so this is the single place that enforces it.
+    // can be made against them. purchaseAndJoin() comes through here, so this
+    // is the single place that enforces it.
     if (trainer.status !== UserStatus.Active) {
       throw new BadRequestException({
         statusCode: 400,
@@ -96,25 +95,6 @@ export class CoursePurchasesService {
     }
 
     return purchase;
-  }
-
-  async purchase(
-    clientId: string,
-    courseId: string,
-    createCoursePurchaseDto: CreateCoursePurchaseDto,
-  ) {
-    const couponIds = createCoursePurchaseDto.couponIds ?? [];
-    const course = await this.validatePurchase(clientId, courseId, couponIds);
-
-    return this.prisma.$transaction((tx) =>
-      this.createPurchaseInTransaction(
-        tx,
-        clientId,
-        courseId,
-        course.trainerId,
-        couponIds,
-      ),
-    );
   }
 
   async purchaseAndJoin(
