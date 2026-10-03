@@ -23,6 +23,7 @@ describe('CoursePurchasesService.purchaseAndJoin', () => {
   let prisma: {
     user: { findUnique: jest.Mock };
     trainerCourse: { findUnique: jest.Mock };
+    coursePurchase: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let omiseService: {
@@ -69,6 +70,9 @@ describe('CoursePurchasesService.purchaseAndJoin', () => {
         }),
       },
       trainerCourse: { findUnique: jest.fn() },
+      // No earlier paid purchases with this trainer, so the "unfinished
+      // course" guard in validatePurchase lets these through.
+      coursePurchase: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((cb: (tx: unknown) => unknown) =>
         Promise.resolve(cb(fakeTx)),
       ),
@@ -340,6 +344,7 @@ describe('CoursePurchasesService.findMyPurchasesUnderTrainer', () => {
           provide: CoursePurchaseCalculationsService,
           useValue: {
             computeRemainingSessions: jest.fn().mockResolvedValue(new Map()),
+            countInProgressWorkouts: jest.fn().mockResolvedValue(new Map()),
           },
         },
       ],

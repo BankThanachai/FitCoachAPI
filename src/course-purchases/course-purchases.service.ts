@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -17,7 +18,10 @@ import { translateOmiseFailure } from '../payments/omise-error.util';
 import { OmiseService } from '../payments/omise.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { CoursePurchaseCalculationsService } from '../shared/course-purchase-calculations.service';
+import {
+  CoursePurchaseCalculationsService,
+  isPurchaseUnfinished,
+} from '../shared/course-purchase-calculations.service';
 import { PurchaseAndJoinDto } from './dto/purchase-and-join.dto';
 
 @Injectable()
@@ -64,6 +68,8 @@ export class CoursePurchasesService {
       });
     }
 
+    await this.ensureNoUnfinishedPurchase(clientId, course.trainerId);
+
     if (course.isTrial && couponIds.length !== 1) {
       throw new BadRequestException(
         'A trial course requires exactly one trial coupon',
@@ -77,6 +83,57 @@ export class CoursePurchasesService {
     );
 
     return course;
+  }
+
+  /**
+   * A client can't buy another course from a trainer while an earlier course
+   * with that trainer is still unfinished (see isPurchaseUnfinished): they
+   * have to use up and finish it first. This runs from validatePurchase,
+   * before anything is charged, so nothing is taken for a purchase that would
+   * be refused. Two purchases started at the very same instant can both pass
+   * it — it is a rule about the client's own history, not a lock.
+   */
+  private async ensureNoUnfinishedPurchase(
+    clientId: string,
+    trainerId: string,
+  ) {
+    const paidPurchases = await this.prisma.coursePurchase.findMany({
+      where: {
+        clientId,
+        course: { trainerId },
+        payment: { status: PaymentStatus.Successful },
+      },
+      select: { id: true },
+    });
+    if (paidPurchases.length === 0) {
+      return;
+    }
+
+    const purchaseIds = paidPurchases.map((purchase) => purchase.id);
+    const [sessionsByPurchase, inProgressByPurchase] = await Promise.all([
+      this.coursePurchaseCalculationsService.computeRemainingSessions(
+        purchaseIds,
+      ),
+      this.coursePurchaseCalculationsService.countInProgressWorkouts(
+        purchaseIds,
+      ),
+    ]);
+    const unfinishedPurchaseId = purchaseIds.find((purchaseId) =>
+      isPurchaseUnfinished(
+        PaymentStatus.Successful,
+        sessionsByPurchase.get(purchaseId)?.remainingSessions ?? 0,
+        inProgressByPurchase.get(purchaseId) ?? 0,
+      ),
+    );
+    if (unfinishedPurchaseId) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'UNFINISHED_COURSE_EXISTS',
+        message:
+          'You still have an unfinished course with this trainer — finish it before buying another',
+        purchaseId: unfinishedPurchaseId,
+      });
+    }
   }
 
   async createPurchaseInTransaction(
@@ -312,19 +369,23 @@ export class CoursePurchasesService {
       orderBy: { purchasedAt: 'desc' },
     });
 
-    const [sessionsByPurchase, completedCounts] = await Promise.all([
-      this.coursePurchaseCalculationsService.computeRemainingSessions(
-        purchases.map((p) => p.id),
-      ),
-      this.prisma.workout.groupBy({
-        by: ['purchaseId'],
-        where: {
-          purchaseId: { in: purchases.map((p) => p.id) },
-          status: WorkoutStatus.Completed,
-        },
-        _count: true,
-      }),
-    ]);
+    const [sessionsByPurchase, completedCounts, inProgressByPurchase] =
+      await Promise.all([
+        this.coursePurchaseCalculationsService.computeRemainingSessions(
+          purchases.map((p) => p.id),
+        ),
+        this.prisma.workout.groupBy({
+          by: ['purchaseId'],
+          where: {
+            purchaseId: { in: purchases.map((p) => p.id) },
+            status: WorkoutStatus.Completed,
+          },
+          _count: true,
+        }),
+        this.coursePurchaseCalculationsService.countInProgressWorkouts(
+          purchases.map((p) => p.id),
+        ),
+      ]);
     const completedByPurchaseId = new Map(
       completedCounts.map((row) => [row.purchaseId, row._count]),
     );
@@ -358,6 +419,17 @@ export class CoursePurchasesService {
         // rather than this list endpoint guessing at staleness.
         paymentStatus: payment?.status ?? null,
         opnChargeId: payment?.opnChargeId ?? null,
+        // Paid, and either still has sessions to book or a booked session
+        // that hasn't ended yet — the same rule that makes
+        // POST /trainer-courses/:courseId/purchase-and-join refuse a new
+        // course from this trainer (409 UNFINISHED_COURSE_EXISTS). Lets
+        // mobile disable "buy another course" up front instead of only
+        // failing at payment time.
+        isUnfinished: isPurchaseUnfinished(
+          payment?.status,
+          sessions?.remainingSessions ?? 0,
+          inProgressByPurchase.get(purchase.id) ?? 0,
+        ),
       };
     });
   }

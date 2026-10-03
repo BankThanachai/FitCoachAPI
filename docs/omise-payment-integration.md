@@ -59,6 +59,29 @@ Request body (`PurchaseAndJoinDto`):
 }
 ```
 
+**A client can't buy another course from a trainer while an earlier one with
+that trainer is unfinished.** Checked before anything is charged (card or
+PromptPay) — the request is refused with `409 Conflict`:
+
+```jsonc
+{
+  "statusCode": 409,
+  "code": "UNFINISHED_COURSE_EXISTS",
+  "message": "You still have an unfinished course with this trainer — finish it before buying another",
+  "purchaseId": "uuid" // the unfinished purchase
+}
+```
+
+A purchase is *unfinished* when its payment is `Successful` **and** the client
+either still has sessions left to book on it, or has a booked workout that
+hasn't ended (status `PendingApproval`, `TrainerApproved` or
+`TrainerSubmitted` — all of which the client can cancel). `ClientRejected`
+isn't counted (only the trainer can move it on), and unpaid or dead purchases
+(`Pending`/`Failed`/`Expired`/`Cancelled`/`Reversed`) don't count either. The
+rule is per trainer, and trial courses count like any other. Endpoint 4 returns
+the same verdict per purchase as `isUnfinished`, so the UI can disable "buy
+another" up front.
+
 Note: `amount` is **no longer accepted** — the backend reads `TrainerCourse.price`
 itself. If mobile still sends `amount`, it will be silently ignored (global
 `ValidationPipe` has `whitelist: true`, so unknown fields are stripped) —
@@ -238,7 +261,12 @@ Each purchase row now includes:
   // NEW:
   "couponIds": ["uuid-1"],  // coupon ids redeemed against this specific purchase; [] if none
   "paymentStatus": "Pending" | "Successful" | "Failed" | "Expired" | "Reversed" | "Cancelled" | null,
-  "opnChargeId": "chrg_test_..." | null
+  "opnChargeId": "chrg_test_..." | null,
+  // true when the payment is Successful and the client still has sessions to
+  // book or a booked workout that hasn't ended. While any purchase with a
+  // trainer has this set, Endpoint 1 refuses a new course from that trainer
+  // (409 UNFINISHED_COURSE_EXISTS).
+  "isUnfinished": true | false
 }
 ```
 

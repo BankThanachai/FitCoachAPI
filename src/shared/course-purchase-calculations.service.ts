@@ -1,6 +1,42 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, WorkoutStatus } from '../../generated/prisma/client';
+import {
+  PaymentStatus,
+  Prisma,
+  WorkoutStatus,
+} from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+/**
+ * Workout statuses where a booked session hasn't ended yet and the client can
+ * still resolve it themselves (cancel it, or approve the trainer's
+ * submission). ClientRejected is deliberately not here: only the trainer can
+ * move it on (by re-submitting), so counting it would leave a client blocked
+ * by something they have no way to clear.
+ */
+export const IN_PROGRESS_WORKOUT_STATUSES: WorkoutStatus[] = [
+  WorkoutStatus.PendingApproval,
+  WorkoutStatus.TrainerApproved,
+  WorkoutStatus.TrainerSubmitted,
+];
+
+/**
+ * A purchase is "unfinished" when it's paid and the client either still has
+ * sessions left to book on it or has a booked session that hasn't ended yet.
+ * A client can't buy another course from a trainer while any purchase with
+ * that trainer is unfinished. Unpaid and dead (Pending/Failed/Expired/
+ * Cancelled/Reversed) purchases don't count — they aren't a course the client
+ * actually has.
+ */
+export function isPurchaseUnfinished(
+  paymentStatus: PaymentStatus | null | undefined,
+  remainingSessions: number,
+  inProgressWorkouts: number,
+): boolean {
+  return (
+    paymentStatus === PaymentStatus.Successful &&
+    (remainingSessions > 0 || inProgressWorkouts > 0)
+  );
+}
 
 @Injectable()
 export class CoursePurchaseCalculationsService {
@@ -58,5 +94,25 @@ export class CoursePurchaseCalculationsService {
         return [purchase.id, { remainingSessions, usedSessions }];
       }),
     );
+  }
+
+  /**
+   * How many workouts under each purchase are still in progress (see
+   * IN_PROGRESS_WORKOUT_STATUSES). Purchases with none are absent from the
+   * map. Feeds isPurchaseUnfinished.
+   */
+  async countInProgressWorkouts(
+    purchaseIds: string[],
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
+    const counts = await client.workout.groupBy({
+      by: ['purchaseId'],
+      where: {
+        purchaseId: { in: purchaseIds },
+        status: { in: IN_PROGRESS_WORKOUT_STATUSES },
+      },
+      _count: true,
+    });
+    return new Map(counts.map((row) => [row.purchaseId, row._count]));
   }
 }
