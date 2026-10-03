@@ -382,11 +382,11 @@ export class CoursePurchasesService {
     }
     // A PromptPay purchase is created eagerly (Pending) before the payment
     // actually clears — it can't be used to book a session until the Omise
-    // webhook (or a status poll) confirms it as Successful.
-    if (
-      purchase.payment &&
-      purchase.payment.status !== PaymentStatus.Successful
-    ) {
+    // webhook (or a status poll) confirms it as Successful. Every purchase
+    // is created together with its Payment row (see commitPurchaseAndJoin),
+    // so a missing payment is never a valid state — treat it as unpaid
+    // rather than letting it through.
+    if (purchase.payment?.status !== PaymentStatus.Successful) {
       throw new BadRequestException(
         'This course purchase has not been paid for yet',
       );

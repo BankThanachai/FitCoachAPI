@@ -28,8 +28,11 @@ export class WorkoutsController {
   constructor(private readonly workoutsService: WorkoutsService) {}
 
   @Post()
-  create(@Body() createWorkoutDto: CreateWorkoutDto) {
-    return this.workoutsService.create(createWorkoutDto);
+  create(
+    @Req() request: Request & { user: JwtPayload },
+    @Body() createWorkoutDto: CreateWorkoutDto,
+  ) {
+    return this.workoutsService.create(request.user.sub, createWorkoutDto);
   }
 
   @Get()

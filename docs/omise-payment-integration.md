@@ -251,13 +251,19 @@ Each purchase row now includes:
   from this list endpoint.
 - `paymentStatus`/`opnChargeId` are `null` together only in the edge case of
   a purchase with no `Payment` row at all (shouldn't happen via the normal
-  purchase flow today, but the field is nullable defensively).
+  purchase flow today, but the field is nullable defensively). Such a
+  purchase can't be booked either — `ensureUsable()` treats a missing
+  payment as unpaid.
 - Use `paymentStatus !== "Successful"` as the signal to disable
   booking-related actions on that course card and show a "pay now" button
   instead — mirrors the server-side gate already enforced in `ensureUsable()`
-  (booking a workout throws `BadRequestException` if the purchase's payment
-  isn't `Successful`), so this is UI-side defense-in-depth, not the actual
-  enforcement.
+  (booking a workout throws `BadRequestException` if the purchase has no
+  payment or its payment isn't `Successful`), so this is UI-side
+  defense-in-depth, not the actual enforcement.
+- `POST /workouts` (booking) only accepts the logged-in client's own
+  `clientId`: a different `clientId` in the body returns `403 Forbidden`
+  ("You can only book workouts for yourself"). The field is still required
+  in the body, so the mobile request shape is unchanged.
 - Use `opnChargeId` directly as `:chargeId` for Endpoint 2 — no separate
   lookup needed.
 - **A cancelled purchase (Endpoint 5) simply disappears from this list** —

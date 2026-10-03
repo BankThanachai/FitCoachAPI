@@ -143,7 +143,15 @@ export class WorkoutsService {
     }
   }
 
-  async create(createWorkoutDto: CreateWorkoutDto) {
+  async create(requesterId: string, createWorkoutDto: CreateWorkoutDto) {
+    // Booking is the client's own action. clientId stays in the body only
+    // because that's the request shape the mobile app already sends — it has
+    // to be the caller, otherwise ensureUsable()'s "this purchase belongs to
+    // this client" check would just compare two values the caller chose.
+    if (createWorkoutDto.clientId !== requesterId) {
+      throw new ForbiddenException('You can only book workouts for yourself');
+    }
+
     const trainer = await this.prisma.user.findUnique({
       where: { id: createWorkoutDto.trainerId },
     });
