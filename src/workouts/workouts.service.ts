@@ -20,6 +20,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { computeFullName, withFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
+import { R2Service } from '../shared/r2.service';
 import { CreateWorkoutDto } from './dto/create-workout.dto';
 import { UpdateWorkoutDto } from './dto/update-workout.dto';
 
@@ -50,26 +51,16 @@ function addMinutes(date: Date, minutes: number): Date {
 
 const WORKOUT_INCLUDE = {
   trainer: { select: { id: true, firstName: true, lastName: true } },
-  client: { select: { id: true, firstName: true, lastName: true } },
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      profilePhotoKey: true,
+    },
+  },
   exercises: { include: { sets: true } },
 } as const;
-
-function serialize<
-  T extends Workout & {
-    trainer?: { firstName: string | null; lastName: string | null };
-    client?: { firstName: string | null; lastName: string | null };
-  },
->(workout: T) {
-  const { trainer, client, ...rest } = workout;
-  return {
-    ...rest,
-    ...(trainer ? { trainer: withFullName(trainer) } : {}),
-    ...(client ? { client: withFullName(client) } : {}),
-    date: workout.date.toISOString().slice(0, 10),
-    fromTime: dateToTimeString(workout.fromTime),
-    toTime: dateToTimeString(workout.toTime),
-  };
-}
 
 @Injectable()
 export class WorkoutsService {
@@ -77,7 +68,48 @@ export class WorkoutsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly coursePurchasesService: CoursePurchasesService,
+    private readonly r2Service: R2Service,
   ) {}
+
+  /**
+   * Shapes a workout for the API: formats date/times, adds the computed
+   * `name` on trainer/client, and swaps the client's raw `profilePhotoKey`
+   * for a public `profilePhotoUrl` (null when they have no photo).
+   */
+  private serialize<
+    T extends Workout & {
+      trainer?: { firstName: string | null; lastName: string | null };
+      client?: {
+        firstName: string | null;
+        lastName: string | null;
+        profilePhotoKey: string | null;
+      };
+    },
+  >(workout: T) {
+    const { trainer, client, ...rest } = workout;
+    return {
+      ...rest,
+      ...(trainer ? { trainer: withFullName(trainer) } : {}),
+      ...(client ? { client: this.serializeClient(client) } : {}),
+      date: workout.date.toISOString().slice(0, 10),
+      fromTime: dateToTimeString(workout.fromTime),
+      toTime: dateToTimeString(workout.toTime),
+    };
+  }
+
+  private serializeClient<
+    C extends {
+      firstName: string | null;
+      lastName: string | null;
+      profilePhotoKey: string | null;
+    },
+  >(client: C) {
+    const { profilePhotoKey, ...rest } = client;
+    return withFullName({
+      ...rest,
+      profilePhotoUrl: this.r2Service.getPublicUrl(profilePhotoKey),
+    });
+  }
 
   /**
    * Checks the trainer has no other workout booked over this time slot.
@@ -172,7 +204,7 @@ export class WorkoutsService {
       entityId: workout.id,
     });
 
-    return serialize(workout);
+    return this.serialize(workout);
   }
 
   async findAll() {
@@ -180,7 +212,7 @@ export class WorkoutsService {
       include: WORKOUT_INCLUDE,
       orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
     });
-    return workouts.map(serialize);
+    return workouts.map((workout) => this.serialize(workout));
   }
 
   async findByClient(
@@ -211,7 +243,12 @@ export class WorkoutsService {
       }),
       this.prisma.workout.count({ where }),
     ]);
-    return paginate(workouts.map(serialize), page, pageSize, total);
+    return paginate(
+      workouts.map((workout) => this.serialize(workout)),
+      page,
+      pageSize,
+      total,
+    );
   }
 
   async findByTrainer(
@@ -222,11 +259,11 @@ export class WorkoutsService {
     dateFrom?: string,
     dateTo?: string,
     clientName?: string,
-    status?: WorkoutStatus,
+    statuses?: WorkoutStatus[],
   ) {
     const where: Prisma.WorkoutWhereInput = {
       trainerId,
-      status,
+      status: statuses?.length ? { in: statuses } : undefined,
       date: date
         ? new Date(date)
         : dateFrom || dateTo
@@ -254,7 +291,12 @@ export class WorkoutsService {
       }),
       this.prisma.workout.count({ where }),
     ]);
-    return paginate(workouts.map(serialize), page, pageSize, total);
+    return paginate(
+      workouts.map((workout) => this.serialize(workout)),
+      page,
+      pageSize,
+      total,
+    );
   }
 
   /**
@@ -280,7 +322,7 @@ export class WorkoutsService {
       include: WORKOUT_INCLUDE,
       orderBy: [{ date: 'desc' }, { fromTime: 'asc' }],
     });
-    return workouts.map(serialize);
+    return workouts.map((workout) => this.serialize(workout));
   }
 
   async findOne(id: string) {
@@ -291,7 +333,7 @@ export class WorkoutsService {
     if (!workout) {
       throw new NotFoundException(`Workout with id ${id} not found`);
     }
-    return serialize(workout);
+    return this.serialize(workout);
   }
 
   /**
@@ -324,7 +366,7 @@ export class WorkoutsService {
       userId: workout.clientId,
       type: NotificationType.Workout,
       title: 'Workout confirmed',
-      body: `Your workout on ${serialize(workout).date} has been confirmed`,
+      body: `Your workout on ${this.serialize(workout).date} has been confirmed`,
       entityType: 'Workout',
       entityId: workout.id,
     });
@@ -364,7 +406,7 @@ export class WorkoutsService {
       userId: workout.clientId,
       type: NotificationType.Workout,
       title: 'Workout request declined',
-      body: `Your workout request on ${serialize(workout).date} was declined by the trainer: ${reason}`,
+      body: `Your workout request on ${this.serialize(workout).date} was declined by the trainer: ${reason}`,
       entityType: 'Workout',
       entityId: workout.id,
     });
@@ -410,7 +452,7 @@ export class WorkoutsService {
       userId: workout.clientId,
       type: NotificationType.Workout,
       title: 'Workout awaiting your review',
-      body: `Your trainer submitted the workout on ${serialize(workout).date} — please review it`,
+      body: `Your trainer submitted the workout on ${this.serialize(workout).date} — please review it`,
       entityType: 'Workout',
       entityId: workout.id,
     });
@@ -446,7 +488,7 @@ export class WorkoutsService {
       userId: workout.trainerId,
       type: NotificationType.Workout,
       title: 'Workout approved',
-      body: `The client approved the workout on ${serialize(workout).date}`,
+      body: `The client approved the workout on ${this.serialize(workout).date}`,
       entityType: 'Workout',
       entityId: workout.id,
     });
@@ -483,7 +525,7 @@ export class WorkoutsService {
       userId: workout.trainerId,
       type: NotificationType.Workout,
       title: 'Workout submission declined',
-      body: `The client declined the workout submission on ${serialize(workout).date}: ${reason}`,
+      body: `The client declined the workout submission on ${this.serialize(workout).date}: ${reason}`,
       entityType: 'Workout',
       entityId: workout.id,
     });
@@ -533,8 +575,8 @@ export class WorkoutsService {
       type: NotificationType.Workout,
       title: 'Workout cancelled',
       body: reason
-        ? `The workout on ${serialize(workout).date} was cancelled: ${reason}`
-        : `The workout on ${serialize(workout).date} was cancelled`,
+        ? `The workout on ${this.serialize(workout).date} was cancelled: ${reason}`
+        : `The workout on ${this.serialize(workout).date} was cancelled`,
       entityType: 'Workout',
       entityId: workout.id,
     });
@@ -587,7 +629,7 @@ export class WorkoutsService {
       data: { date, fromTime, toTime },
     });
 
-    return serialize(workout);
+    return this.serialize(workout);
   }
 
   private computeSlots(
