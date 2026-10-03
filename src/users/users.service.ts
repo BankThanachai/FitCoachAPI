@@ -10,6 +10,7 @@ import {
   ClientTrainerStatus,
   Prisma,
   User,
+  UserStatus,
   UserType,
 } from '../../generated/prisma/client';
 import { AuthService } from '../auth/auth.service';
@@ -18,7 +19,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { withFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
 import { R2Service } from '../shared/r2.service';
-import { refreshTrainerRating } from '../shared/trainer-rating.util';
 import { WorkingHoursService } from '../working-hours/working-hours.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { SearchTrainerDto } from './dto/search-trainer.dto';
@@ -120,6 +120,7 @@ export class UsersService {
     const pageSize = searchTrainerDto.pageSize ?? 20;
     const where: Prisma.UserWhereInput = {
       type: UserType.Trainer,
+      status: UserStatus.Active,
       firstName: searchTrainerDto.firstName
         ? { contains: searchTrainerDto.firstName, mode: 'insensitive' }
         : undefined,
@@ -234,7 +235,7 @@ export class UsersService {
   }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
-    const existing = await this.ensureUserExists(id);
+    const existing = await this.ensureActiveUserExists(id);
     if (
       updateUserDto.acceptsPartnerWork !== undefined &&
       existing.type !== UserType.Trainer
@@ -266,28 +267,28 @@ export class UsersService {
     }
   }
 
+  // Soft delete — users are never hard-deleted. The row and everything that
+  // points at it (reviews, workouts, purchases, chats, ...) stays and can still
+  // be viewed; the account is just marked Inactive. That stops it logging in,
+  // takes the trainer out of search, stops clients buying more of their courses,
+  // and frees its email/phone for a new registration (they're only unique among
+  // Active users). Its refresh tokens are revoked and its device tokens dropped
+  // so it stops being reachable, and JwtStrategy rejects any access token it had
+  // already been issued, since it re-checks the status per request.
   async remove(id: string) {
-    await this.ensureUserExists(id);
+    await this.ensureActiveUserExists(id);
+    const now = new Date();
     const user = await this.prisma.$transaction(async (tx) => {
-      // Deleting a client cascades to the reviews they wrote, so every trainer
-      // they reviewed needs their cached rating/reviewCount refreshed. (Deleting
-      // a trainer needs nothing: the reviews about them go with them.)
-      const reviewed = await tx.review.findMany({
-        where: { reviewerId: id },
-        select: { targetUserId: true },
-        distinct: ['targetUserId'],
+      await tx.refreshToken.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: now },
       });
-
-      const deleted = await tx.user.delete({
-        where: { id },
+      await tx.deviceToken.deleteMany({ where: { userId: id } });
+      return tx.user.update({
+        where: { id, status: UserStatus.Active },
+        data: { status: UserStatus.Inactive, deactivatedAt: now },
         include: { bankAccounts: true },
       });
-
-      // Sorted so concurrent deletions lock trainer rows in the same order.
-      for (const trainerId of reviewed.map((r) => r.targetUserId).sort()) {
-        await refreshTrainerRating(tx, trainerId);
-      }
-      return deleted;
     });
     return this.withComputedFields(excludePassword(user));
   }
@@ -298,6 +299,16 @@ export class UsersService {
       include: { bankAccounts: true },
     });
     if (!user) {
+      throw new NotFoundException(`User with id ${id} not found`);
+    }
+    return user;
+  }
+
+  // For changes: a deactivated account can still be viewed (findOne) but not
+  // edited, and can't be deactivated a second time — it counts as not found.
+  private async ensureActiveUserExists(id: string) {
+    const user = await this.ensureUserExists(id);
+    if (user.status !== UserStatus.Active) {
       throw new NotFoundException(`User with id ${id} not found`);
     }
     return user;

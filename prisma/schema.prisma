@@ -66,6 +66,16 @@ enum WorkoutStatus {
   Cancelled
 }
 
+// Users are never hard-deleted: DELETE /users/:id deactivates the account
+// (UsersService.remove). Inactive users can't log in, aren't listed in trainer
+// search and can't be bought courses from — everything else can still be viewed
+// — and, unlike Active ones, they don't hold on to their email and phone: see
+// the partial unique indexes on User below.
+enum UserStatus {
+  Active
+  Inactive
+}
+
 enum ClientTrainerStatus {
   Pending
   Accepted
@@ -131,8 +141,15 @@ enum SubscriptionEnvironment {
 
 model User {
   id                      String                  @id @default(uuid())
-  email                   String                  @unique
-  phone                   String                  @unique
+  // email and phone are unique among ACTIVE users only, so a deactivated
+  // account's contact details can be registered again. Prisma can't express
+  // a partial unique index, so that is enforced by the User_email_active_key /
+  // User_phone_active_key indexes created in the user_soft_delete migration
+  // (not declared here), and there is deliberately no @unique on these two
+  // fields: look users up with findFirst({ where: { email, status: Active } }),
+  // never findUnique.
+  email                   String
+  phone                   String
   password                String
   firstName               String?
   lastName                String?
@@ -146,6 +163,8 @@ model User {
   subDistrict             String
   postalCode              String
   type                    UserType
+  status                  UserStatus              @default(Active)
+  deactivatedAt           DateTime?
   // Cached average of Review.score received as a trainer (rounded to 2
   // places) and the number of those reviews — both recomputed in the same
   // transaction as every new review (ReviewsService.create) so trainer

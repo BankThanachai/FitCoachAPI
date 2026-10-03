@@ -10,6 +10,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomInt } from 'crypto';
+import { UserStatus } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { authConfig } from './auth.config';
 import { LoginDto } from './dto/login.dto';
@@ -39,8 +40,14 @@ export class AuthService {
   ) {}
 
   async login(loginDto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: this.resolveIdentifier(loginDto.identifier),
+    // Only Active accounts can log in. A deactivated (soft-deleted) account is
+    // treated exactly like one that doesn't exist, so the response can't be
+    // used to tell the two apart.
+    const user = await this.prisma.user.findFirst({
+      where: {
+        ...this.resolveIdentifier(loginDto.identifier),
+        status: UserStatus.Active,
+      },
     });
     if (!user) {
       // Same body shape (including attemptsRemaining) as a wrong password
@@ -186,7 +193,7 @@ export class AuthService {
   // unconsumed one for this user so only the latest code is ever valid.
   async sendEmailOtp(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
+    if (!user || user.status !== UserStatus.Active) {
       throw new NotFoundException(`User with id ${userId} not found`);
     }
 
@@ -235,7 +242,9 @@ export class AuthService {
   }
 
   async resendEmailOtp(email: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.prisma.user.findFirst({
+      where: { email, status: UserStatus.Active },
+    });
     if (!user) {
       // Don't reveal whether an email is registered — behave the same as a
       // successful resend either way.
@@ -254,7 +263,7 @@ export class AuthService {
   // field (phone vs email), and the delivery channel all differ.
   async sendPhoneOtp(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
+    if (!user || user.status !== UserStatus.Active) {
       throw new NotFoundException(`User with id ${userId} not found`);
     }
 
@@ -301,7 +310,9 @@ export class AuthService {
   }
 
   async resendPhoneOtp(phone: string) {
-    const user = await this.prisma.user.findUnique({ where: { phone } });
+    const user = await this.prisma.user.findFirst({
+      where: { phone, status: UserStatus.Active },
+    });
     if (!user) {
       // Don't reveal whether a phone number is registered — behave the same
       // as a successful resend either way.
@@ -315,7 +326,9 @@ export class AuthService {
   }
 
   async verifyPhoneOtp(phone: string, code: string) {
-    const user = await this.prisma.user.findUnique({ where: { phone } });
+    const user = await this.prisma.user.findFirst({
+      where: { phone, status: UserStatus.Active },
+    });
     if (!user) {
       // Same body shape (including attemptsRemaining) as a wrong code on a
       // real, freshly-sent OTP below — see the comment there.
@@ -387,7 +400,9 @@ export class AuthService {
   }
 
   async verifyEmailOtp(email: string, code: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.prisma.user.findFirst({
+      where: { email, status: UserStatus.Active },
+    });
     if (!user) {
       // Same body shape (including attemptsRemaining) as a wrong code on a
       // real, freshly-sent OTP below — see the comment there.
@@ -516,7 +531,12 @@ export class AuthService {
       include: { user: true },
     });
 
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+    if (
+      !stored ||
+      stored.revokedAt ||
+      stored.expiresAt < new Date() ||
+      stored.user.status !== UserStatus.Active
+    ) {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 

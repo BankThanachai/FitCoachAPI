@@ -1,5 +1,6 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { UserType } from '../../generated/prisma/client';
+import { UserStatus, UserType } from '../../generated/prisma/client';
 import { AuthService } from '../auth/auth.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,6 +15,7 @@ function makeUser(overrides: Record<string, unknown> = {}) {
     id: 'trainer-1',
     password: 'hash',
     type: UserType.Trainer,
+    status: UserStatus.Active,
     firstName: 'Tom',
     lastName: 'Lee',
     profilePhotoKey: null,
@@ -31,12 +33,20 @@ describe('UsersService', () => {
   let service: UsersService;
   let tx: {
     $queryRaw: jest.Mock;
-    review: { findMany: jest.Mock; aggregate: jest.Mock };
-    user: { delete: jest.Mock; update: jest.Mock };
+    review: { aggregate: jest.Mock };
+    user: { update: jest.Mock; delete: jest.Mock; deleteMany: jest.Mock };
+    refreshToken: { updateMany: jest.Mock };
+    deviceToken: { deleteMany: jest.Mock };
   };
   let prisma: {
     $transaction: jest.Mock;
-    user: { findMany: jest.Mock; findUnique: jest.Mock; count: jest.Mock };
+    user: {
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      count: jest.Mock;
+      delete: jest.Mock;
+      deleteMany: jest.Mock;
+    };
     review: { groupBy: jest.Mock; aggregate: jest.Mock };
     clientTrainer: {
       findMany: jest.Mock;
@@ -49,15 +59,17 @@ describe('UsersService', () => {
     tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       review: {
-        findMany: jest.fn().mockResolvedValue([]),
         aggregate: jest
           .fn()
           .mockResolvedValue({ _avg: { score: 4 }, _count: 1 }),
       },
       user: {
-        delete: jest.fn().mockResolvedValue(makeUser({ id: CLIENT_ID })),
         update: jest.fn().mockResolvedValue({}),
+        delete: jest.fn(),
+        deleteMany: jest.fn(),
       },
+      refreshToken: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      deviceToken: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     };
     prisma = {
       $transaction: jest.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
@@ -65,6 +77,8 @@ describe('UsersService', () => {
         findMany: jest.fn().mockResolvedValue([makeUser()]),
         findUnique: jest.fn().mockResolvedValue(makeUser()),
         count: jest.fn().mockResolvedValue(1),
+        delete: jest.fn(),
+        deleteMany: jest.fn(),
       },
       review: { groupBy: jest.fn(), aggregate: jest.fn() },
       clientTrainer: {
@@ -126,47 +140,135 @@ describe('UsersService', () => {
     });
   });
 
-  describe('remove', () => {
-    it('refreshes the cached rating of every trainer the deleted client had reviewed, after the user (and so their reviews) are gone', async () => {
+  describe('a deactivated (Inactive) user', () => {
+    const inactive = () =>
+      makeUser({
+        id: CLIENT_ID,
+        type: UserType.Client,
+        status: UserStatus.Inactive,
+      });
+
+    it('is still listed by findAll — viewing is unchanged', async () => {
+      await service.findAll();
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        include: { bankAccounts: true },
+      });
+    });
+
+    it('can still be viewed with findOne, and its status is visible', async () => {
+      prisma.user.findUnique.mockResolvedValue(inactive());
+
+      const result = await service.findOne(CLIENT_ID);
+
+      expect(result).toMatchObject({
+        id: CLIENT_ID,
+        status: UserStatus.Inactive,
+      });
+      expect(result).not.toHaveProperty('password');
+    });
+
+    it('is the only thing that disappears from trainer search', async () => {
+      await service.searchTrainers(CLIENT_ID, {});
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            type: UserType.Trainer,
+            status: UserStatus.Active,
+          }) as unknown,
+        }),
+      );
+      expect(prisma.user.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          status: UserStatus.Active,
+        }) as unknown,
+      });
+    });
+
+    it('cannot be edited or deactivated again — update and remove treat it as not found', async () => {
+      prisma.user.findUnique.mockResolvedValue(inactive());
+
+      await expect(
+        service.update(CLIENT_ID, { firstName: 'X' }),
+      ).rejects.toThrow(NotFoundException);
+      await expect(service.remove(CLIENT_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: CLIENT_ID },
+        include: { bankAccounts: true },
+      });
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('findOne is a 404 only for a user that does not exist at all', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.findOne('gone')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('remove (soft delete)', () => {
+    beforeEach(() => {
       prisma.user.findUnique.mockResolvedValue(
         makeUser({ id: CLIENT_ID, type: UserType.Client }),
       );
-      tx.review.findMany.mockResolvedValue([
-        { targetUserId: 'trainer-b' },
-        { targetUserId: 'trainer-a' },
-      ]);
-      const order: string[] = [];
-      tx.user.delete.mockImplementation(() => {
-        order.push('delete');
-        return Promise.resolve(makeUser({ id: CLIENT_ID }));
-      });
-      tx.user.update.mockImplementation(
-        ({ where }: { where: { id: string } }) => {
-          order.push(`refresh:${where.id}`);
-          return Promise.resolve({});
-        },
+      tx.user.update.mockResolvedValue(
+        makeUser({ id: CLIENT_ID, status: UserStatus.Inactive }),
       );
-
-      await service.remove(CLIENT_ID);
-
-      expect(tx.review.findMany).toHaveBeenCalledWith({
-        where: { reviewerId: CLIENT_ID },
-        select: { targetUserId: true },
-        distinct: ['targetUserId'],
-      });
-      // Sorted, so concurrent deletions take trainer locks in the same order.
-      expect(order).toEqual([
-        'delete',
-        'refresh:trainer-a',
-        'refresh:trainer-b',
-      ]);
     });
 
-    it('has nothing to refresh when the deleted user wrote no reviews (e.g. a trainer)', async () => {
-      await service.remove('trainer-1');
+    it('marks the user Inactive instead of deleting the row', async () => {
+      await service.remove(CLIENT_ID);
 
-      expect(tx.user.delete).toHaveBeenCalled();
-      expect(tx.user.update).not.toHaveBeenCalled();
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: CLIENT_ID, status: UserStatus.Active },
+        data: {
+          status: UserStatus.Inactive,
+          deactivatedAt: expect.any(Date) as Date,
+        },
+        include: { bankAccounts: true },
+      });
+    });
+
+    it('returns the user, now Inactive and without the password, as DELETE did before', async () => {
+      const result = await service.remove(CLIENT_ID);
+
+      expect(result).toMatchObject({
+        id: CLIENT_ID,
+        status: UserStatus.Inactive,
+      });
+      expect(result).not.toHaveProperty('password');
+    });
+
+    it('never hard-deletes a user, so nothing cascades into their reviews, purchases or chats', async () => {
+      await service.remove(CLIENT_ID);
+
+      expect(tx.user.delete).not.toHaveBeenCalled();
+      expect(tx.user.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(prisma.user.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('cuts the account off: revokes its refresh tokens and drops its device tokens, in the same transaction', async () => {
+      await service.remove(CLIENT_ID);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: CLIENT_ID, revokedAt: null },
+        data: { revokedAt: expect.any(Date) as Date },
+      });
+      expect(tx.deviceToken.deleteMany).toHaveBeenCalledWith({
+        where: { userId: CLIENT_ID },
+      });
+    });
+
+    it('leaves the trainers they reviewed alone — their reviews still exist, so ratings do not change', async () => {
+      await service.remove(CLIENT_ID);
+
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+      expect(tx.review.aggregate).not.toHaveBeenCalled();
     });
   });
 });

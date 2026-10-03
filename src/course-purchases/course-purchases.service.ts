@@ -7,6 +7,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  UserStatus,
   UserType,
   WorkoutStatus,
 } from '../../generated/prisma/client';
@@ -43,11 +44,25 @@ export class CoursePurchasesService {
       throw new BadRequestException('Only clients can purchase courses');
     }
 
-    const course = await this.prisma.trainerCourse.findUnique({
+    const courseWithTrainer = await this.prisma.trainerCourse.findUnique({
       where: { id: courseId },
+      include: { trainer: { select: { status: true } } },
     });
-    if (!course) {
+    if (!courseWithTrainer) {
       throw new NotFoundException('Course not found');
+    }
+    const { trainer, ...course } = courseWithTrainer;
+
+    // A deactivated trainer's courses can still be viewed, but no new purchase
+    // can be made against them. Both purchase() and purchaseAndJoin() come
+    // through here, so this is the single place that enforces it.
+    if (trainer.status !== UserStatus.Active) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'TRAINER_INACTIVE',
+        message:
+          "This trainer is no longer available, so their courses can't be purchased",
+      });
     }
 
     if (course.isTrial && couponIds.length !== 1) {

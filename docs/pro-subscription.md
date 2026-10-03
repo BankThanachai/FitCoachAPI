@@ -34,11 +34,11 @@ nothing ever wrote `User.rating`.
   and review count. The migration backfilled existing trainers. They are
   recomputed by `refreshTrainerRating` ([src/shared/trainer-rating.util.ts](../src/shared/trainer-rating.util.ts))
   in the same transaction as **anything that adds or removes reviews**:
-  `ReviewsService.create`, `TrainerCoursesService.remove` (a course delete
-  cascades into its reviews) and `UsersService.remove` (deleting a client
-  cascades into the reviews they wrote). Any new code path that deletes
-  reviews, purchases, courses or users must call it too, or the cache goes
-  stale.
+  `ReviewsService.create` and `TrainerCoursesService.remove` (a course delete
+  cascades into its reviews). Any new code path that deletes reviews,
+  purchases or courses must call it too, or the cache goes stale. Users are
+  never hard-deleted (see [user-soft-delete.md](user-soft-delete.md)), so
+  removing an account leaves every review — and every cached rating — as is.
 - `averageScore` in `GET /users/trainers/search` and `GET /users/:id` is read
   straight from `User.rating` (no per-request aggregation). `GET
   /reviews/user/:userId` still aggregates live, since it also returns

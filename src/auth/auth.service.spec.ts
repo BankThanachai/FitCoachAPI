@@ -1,7 +1,7 @@
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
-import { UserType } from '../../generated/prisma/client';
+import { UserStatus, UserType } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { ResendService } from './resend.service';
@@ -19,6 +19,7 @@ function makeUser(
     lockedUntil: Date | null;
     emailOtpLockedUntil: Date | null;
     phoneOtpLockedUntil: Date | null;
+    status: UserStatus;
   }> = {},
 ) {
   return {
@@ -27,6 +28,7 @@ function makeUser(
     phone: PHONE,
     password: 'hashed',
     type: UserType.Client,
+    status: overrides.status ?? UserStatus.Active,
     emailVerifiedAt:
       overrides.emailVerifiedAt === undefined
         ? null
@@ -57,7 +59,7 @@ describe('AuthService', () => {
 
   let service: AuthService;
   let prisma: {
-    user: { findUnique: jest.Mock; update: jest.Mock };
+    user: { findUnique: jest.Mock; findFirst: jest.Mock; update: jest.Mock };
     emailOtp: {
       findFirst: jest.Mock;
       updateMany: jest.Mock;
@@ -70,7 +72,11 @@ describe('AuthService', () => {
       create: jest.Mock;
       update: jest.Mock;
     };
-    refreshToken: { create: jest.Mock };
+    refreshToken: {
+      create: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
     deviceToken: { upsert: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -80,7 +86,7 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     prisma = {
-      user: { findUnique: jest.fn(), update: jest.fn() },
+      user: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
       emailOtp: {
         findFirst: jest.fn().mockResolvedValue(null),
         updateMany: jest.fn(),
@@ -97,7 +103,11 @@ describe('AuthService', () => {
         create: jest.fn(),
         update: jest.fn().mockResolvedValue({ attempts: 1 }),
       },
-      refreshToken: { create: jest.fn() },
+      refreshToken: {
+        create: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
       deviceToken: { upsert: jest.fn() },
       $transaction: jest.fn((arg: unknown) => {
         if (Array.isArray(arg)) {
@@ -129,7 +139,7 @@ describe('AuthService', () => {
   describe('login', () => {
     it('issues tokens on a correct password even when email/phone are unverified, flagging both as false', async () => {
       const user = makeUser({ emailVerifiedAt: null, phoneVerifiedAt: null });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -153,7 +163,7 @@ describe('AuthService', () => {
         emailVerifiedAt: new Date(),
         phoneVerifiedAt: null,
       });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -172,7 +182,7 @@ describe('AuthService', () => {
 
     it('rejects with generic "Invalid credentials" on a wrong password, never revealing email', async () => {
       const user = makeUser({ emailVerifiedAt: null });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -184,7 +194,7 @@ describe('AuthService', () => {
 
     it('increments failedLoginAttempts on a wrong password without locking below the threshold', async () => {
       const user = makeUser({ failedLoginAttempts: 1 });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -201,7 +211,7 @@ describe('AuthService', () => {
 
     it('locks the account for 5 minutes on the 3rd consecutive wrong password, returning 429 with retryAfterSeconds', async () => {
       const user = makeUser({ failedLoginAttempts: 2 });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -230,7 +240,7 @@ describe('AuthService', () => {
         failedLoginAttempts: 3,
         lockedUntil: new Date(Date.now() + 60_000),
       });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -247,7 +257,7 @@ describe('AuthService', () => {
         failedLoginAttempts: 3,
         lockedUntil: new Date(Date.now() - 1000),
       });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -270,7 +280,7 @@ describe('AuthService', () => {
         failedLoginAttempts: 3,
         lockedUntil: new Date(Date.now() - 1000),
       });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -301,7 +311,7 @@ describe('AuthService', () => {
 
     it('includes attemptsRemaining in the 401 body on a wrong password', async () => {
       const user = makeUser({ failedLoginAttempts: 1 });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -319,7 +329,7 @@ describe('AuthService', () => {
     });
 
     it('includes the same attemptsRemaining shape for an unregistered identifier as a first wrong password', async () => {
-      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
 
       await expect(
         service.login({
@@ -338,7 +348,7 @@ describe('AuthService', () => {
 
     it('resolves an identifier without "@" as a phone lookup', async () => {
       const user = makeUser({ emailVerifiedAt: new Date() });
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.user.findFirst.mockResolvedValue({
         ...user,
         password: await bcrypt.hash('correct-password', 4),
       });
@@ -349,13 +359,124 @@ describe('AuthService', () => {
         password: 'correct-password',
       });
 
-      expect(prisma.user.findUnique).toHaveBeenCalledWith({
-        where: { phone: user.phone },
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { phone: user.phone, status: UserStatus.Active },
       });
+    });
+
+    it('looks an email identifier up among Active accounts only, so a deactivated account can never log in', async () => {
+      // An Inactive account is simply never returned by the Active-only
+      // lookup, so it gets the same 401 + attemptsRemaining as an unknown one.
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.login({ identifier: EMAIL, password: 'anything' }),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: expect.objectContaining({
+          message: 'Invalid credentials',
+          attemptsRemaining: 2,
+        }) as unknown,
+      });
+
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { email: EMAIL, status: UserStatus.Active },
+      });
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('OTP lookups by email/phone only consider Active accounts', () => {
+    it('verifyEmailOtp', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.verifyEmailOtp(EMAIL, '123456')).rejects.toThrow(
+        'Invalid or expired code',
+      );
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { email: EMAIL, status: UserStatus.Active },
+      });
+    });
+
+    it('verifyPhoneOtp', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.verifyPhoneOtp(PHONE, '123456')).rejects.toThrow(
+        'Invalid or expired code',
+      );
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { phone: PHONE, status: UserStatus.Active },
+      });
+    });
+
+    it('resendEmailOtp sends nothing when there is no Active match', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.resendEmailOtp(EMAIL)).resolves.toBeUndefined();
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { email: EMAIL, status: UserStatus.Active },
+      });
+      expect(resendService.sendOtpEmail).not.toHaveBeenCalled();
+    });
+
+    it('resendPhoneOtp sends nothing when there is no Active match', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.resendPhoneOtp(PHONE)).resolves.toBeUndefined();
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { phone: PHONE, status: UserStatus.Active },
+      });
+      expect(smsProvider.sendOtpSms).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refresh', () => {
+    function storedToken(status: UserStatus) {
+      return {
+        id: 'token-1',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 60_000),
+        user: makeUser({ status }),
+      };
+    }
+
+    it('rotates the token for an Active user', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(
+        storedToken(UserStatus.Active),
+      );
+      prisma.refreshToken.update.mockResolvedValue({});
+      prisma.refreshToken.create.mockResolvedValue({});
+
+      await expect(service.refresh('raw')).resolves.toEqual({
+        accessToken: 'signed',
+        refreshToken: expect.any(String) as string,
+      });
+      expect(prisma.refreshToken.update).toHaveBeenCalled();
+    });
+
+    it('rejects a still-valid refresh token whose user has been deactivated, without issuing anything', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(
+        storedToken(UserStatus.Inactive),
+      );
+
+      await expect(service.refresh('raw')).rejects.toThrow(
+        'Invalid or expired refresh token',
+      );
+      expect(prisma.refreshToken.update).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
   });
 
   describe('sendEmailOtp', () => {
+    it('treats a deactivated user as not found and sends nothing', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        makeUser({ status: UserStatus.Inactive }),
+      );
+
+      await expect(service.sendEmailOtp(USER_ID)).rejects.toThrow('not found');
+      expect(resendService.sendOtpEmail).not.toHaveBeenCalled();
+    });
+
     it('invalidates prior unconsumed OTPs and emails a fresh code', async () => {
       prisma.user.findUnique.mockResolvedValue(makeUser());
       prisma.emailOtp.findFirst.mockResolvedValue(null);
@@ -407,7 +528,7 @@ describe('AuthService', () => {
     it('verifies the user on a correct, unexpired code', async () => {
       const code = '123456';
       const hashed = service['hashToken'](code);
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.emailOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: hashed,
@@ -426,7 +547,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a wrong code, increments attempts, and reports attemptsRemaining', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.emailOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('654321'),
@@ -452,7 +573,7 @@ describe('AuthService', () => {
     });
 
     it('rejects an expired code, reporting a full attemptsRemaining since no attempt was consumed', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.emailOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('123456'),
@@ -472,7 +593,7 @@ describe('AuthService', () => {
     });
 
     it('rejects once the attempt cap is exceeded, with the same generic message and attemptsRemaining: 0', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.emailOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('123456'),
@@ -493,7 +614,7 @@ describe('AuthService', () => {
     });
 
     it('rejects an unregistered email with the same generic message and attemptsRemaining as a wrong code', async () => {
-      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
 
       await expect(
         service.verifyEmailOtp('nobody@example.com', '123456'),
@@ -507,7 +628,7 @@ describe('AuthService', () => {
     });
 
     it('locks the account for 5 minutes on the 3rd consecutive wrong code, returning 429 with retryAfterSeconds', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.emailOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('654321'),
@@ -533,7 +654,7 @@ describe('AuthService', () => {
     });
 
     it('rejects with 429 while emailOtpLockedUntil is still in the future, without touching the OTP row', async () => {
-      prisma.user.findUnique.mockResolvedValue(
+      prisma.user.findFirst.mockResolvedValue(
         makeUser({ emailOtpLockedUntil: new Date(Date.now() + 60_000) }),
       );
 
@@ -546,6 +667,15 @@ describe('AuthService', () => {
   });
 
   describe('sendPhoneOtp', () => {
+    it('treats a deactivated user as not found and sends nothing', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        makeUser({ status: UserStatus.Inactive }),
+      );
+
+      await expect(service.sendPhoneOtp(USER_ID)).rejects.toThrow('not found');
+      expect(smsProvider.sendOtpSms).not.toHaveBeenCalled();
+    });
+
     it('invalidates prior unconsumed OTPs and texts a fresh code', async () => {
       prisma.user.findUnique.mockResolvedValue(makeUser());
       prisma.phoneOtp.findFirst.mockResolvedValue(null);
@@ -597,7 +727,7 @@ describe('AuthService', () => {
     it('verifies the user on a correct, unexpired code', async () => {
       const code = '123456';
       const hashed = service['hashToken'](code);
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.phoneOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: hashed,
@@ -616,7 +746,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a wrong code, increments attempts, and reports attemptsRemaining', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.phoneOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('654321'),
@@ -642,7 +772,7 @@ describe('AuthService', () => {
     });
 
     it('rejects an expired code, reporting a full attemptsRemaining since no attempt was consumed', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.phoneOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('123456'),
@@ -662,7 +792,7 @@ describe('AuthService', () => {
     });
 
     it('rejects once the attempt cap is exceeded, with the same generic message and attemptsRemaining: 0', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.phoneOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('123456'),
@@ -683,7 +813,7 @@ describe('AuthService', () => {
     });
 
     it('rejects an unregistered phone with the same generic message and attemptsRemaining as a wrong code', async () => {
-      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
 
       await expect(
         service.verifyPhoneOtp('0899999999', '123456'),
@@ -697,7 +827,7 @@ describe('AuthService', () => {
     });
 
     it('locks the account for 5 minutes on the 3rd consecutive wrong code, returning 429 with retryAfterSeconds', async () => {
-      prisma.user.findUnique.mockResolvedValue(makeUser());
+      prisma.user.findFirst.mockResolvedValue(makeUser());
       prisma.phoneOtp.findFirst.mockResolvedValue({
         id: 'otp-1',
         codeHash: service['hashToken']('654321'),
@@ -723,7 +853,7 @@ describe('AuthService', () => {
     });
 
     it('rejects with 429 while phoneOtpLockedUntil is still in the future, without touching the OTP row', async () => {
-      prisma.user.findUnique.mockResolvedValue(
+      prisma.user.findFirst.mockResolvedValue(
         makeUser({ phoneOtpLockedUntil: new Date(Date.now() + 60_000) }),
       );
 

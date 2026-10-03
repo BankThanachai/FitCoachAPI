@@ -3,6 +3,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  UserStatus,
   UserType,
 } from '../../generated/prisma/client';
 import { ClientTrainersService } from '../client-trainers/client-trainers.service';
@@ -55,6 +56,7 @@ describe('CoursePurchasesService.purchaseAndJoin', () => {
       sessions: 1,
       isTrial: overrides.isTrial ?? false,
       price: new Prisma.Decimal(overrides.price ?? 500),
+      trainer: { status: UserStatus.Active },
     };
   }
 
@@ -177,6 +179,52 @@ describe('CoursePurchasesService.purchaseAndJoin', () => {
           // omiseToken intentionally omitted
         }),
       ).resolves.toBeDefined();
+    });
+  });
+
+  describe("a deactivated trainer's course", () => {
+    beforeEach(() => {
+      prisma.trainerCourse.findUnique.mockResolvedValue({
+        ...makeCourse({}),
+        trainer: { status: UserStatus.Inactive },
+      });
+    });
+
+    it('cannot be bought with purchaseAndJoin: 400 TRAINER_INACTIVE, and nothing is charged or created', async () => {
+      const attempt = service.purchaseAndJoin(CLIENT_ID, COURSE_ID, {
+        couponIds: [],
+        method: PaymentMethod.Card,
+        omiseToken: 'tok_test',
+      });
+
+      await expect(attempt).rejects.toMatchObject({
+        status: 400,
+        response: expect.objectContaining({
+          code: 'TRAINER_INACTIVE',
+        }) as unknown,
+      });
+      expect(omiseService.chargeWithToken).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('cannot be bought with purchase either', async () => {
+      await expect(
+        service.purchase(CLIENT_ID, COURSE_ID, { couponIds: [] }),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'TRAINER_INACTIVE',
+        }) as unknown,
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("does not change what an Active trainer's course returns: the trainer relation never leaks into the course", async () => {
+      prisma.trainerCourse.findUnique.mockResolvedValue(makeCourse({}));
+
+      const course = await service.validatePurchase(CLIENT_ID, COURSE_ID, []);
+
+      expect(course).not.toHaveProperty('trainer');
+      expect(course.id).toBe(COURSE_ID);
     });
   });
 
