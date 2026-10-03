@@ -104,6 +104,31 @@ enum PaymentMethod {
   InternetBanking
 }
 
+// OTHER covers any RevenueCat store we don't ship to ourselves — notably
+// test_store (the dev/Test Store purchases the app currently uses) and
+// promotional entitlements granted by hand from the RevenueCat dashboard.
+enum SubscriptionStore {
+  APP_STORE
+  PLAY_STORE
+  OTHER
+}
+
+// CANCELLED = auto-renew turned off, but Pro keeps working until
+// Subscription.expiresAt. BILLING_RETRY = the store failed to charge the
+// renewal and is retrying; Pro keeps working for as long as RevenueCat still
+// reports the entitlement as active (i.e. the store's grace period).
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  BILLING_RETRY
+  EXPIRED
+}
+
+enum SubscriptionEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
 model User {
   id                      String                  @id @default(uuid())
   email                   String                  @unique
@@ -121,7 +146,17 @@ model User {
   subDistrict             String
   postalCode              String
   type                    UserType
+  // Cached average of Review.score received as a trainer (rounded to 2
+  // places) and the number of those reviews — both recomputed in the same
+  // transaction as every new review (ReviewsService.create) so trainer
+  // search can sort on them without aggregating at query time.
   rating                  Float                   @default(0)
+  reviewCount             Int                     @default(0)
+  // Public "Pro" badge / search-ranking flag. Kept in sync from RevenueCat
+  // by SubscriptionsService.syncFromRevenueCat and the midnight expiry job,
+  // so it can lag a lost webhook by up to a day — anything that actually
+  // gates a feature must check Subscription.expiresAt instead.
+  isPro                   Boolean                 @default(false)
   acceptsPartnerWork      Boolean                 @default(false)
   profilePhotoKey         String?
   emailVerifiedAt         DateTime?
@@ -158,6 +193,10 @@ model User {
   payments                Payment[]
   personalLogs            PersonalLog[]
   portfolioPhotos         TrainerPortfolioPhoto[]
+  subscription            Subscription?
+  subscriptionEvents      SubscriptionEvent[]
+
+  @@index([type, isPro, rating, reviewCount])
 }
 
 model BankAccount {
@@ -537,4 +576,42 @@ model PaymentRefund {
   createdAt   DateTime @default(now())
 
   @@index([paymentId])
+}
+
+// A trainer's FitWork Pro membership, mirrored from RevenueCat — one row per
+// user, keyed on our own User.id (not the Apple/Google account) so Pro
+// follows the user across devices. Kept apart from User on purpose: UsersService
+// spreads every User column into public profile responses, and the store,
+// status and expiry date must not leak into other people's view of a profile.
+model Subscription {
+  id                    String                  @id @default(uuid())
+  userId                String                  @unique
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store                 SubscriptionStore
+  productId             String
+  status                SubscriptionStatus
+  startedAt             DateTime
+  expiresAt             DateTime
+  originalTransactionId String?
+  environment           SubscriptionEnvironment
+  lastSyncedAt          DateTime
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([expiresAt])
+}
+
+// One row per RevenueCat webhook delivery that matched a user — eventId is
+// RevenueCat's own event id (reused across its retries), so it doubles as the
+// dedupe key, like PaymentEvent.opnEventId.
+model SubscriptionEvent {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId    String   @unique
+  eventType  String
+  rawPayload Json
+  receivedAt DateTime @default(now())
+
+  @@index([userId])
 }

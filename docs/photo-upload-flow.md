@@ -55,10 +55,12 @@ Client                      Backend                       Cloudflare R2
   upload.
 - **The presigned URL expires after 5 minutes.** If the client doesn't
   complete the `PUT` in time, request a new one via presign again.
-- **Portfolio photos use a 1–5 `order` slot system**, not a growing list.
+- **Portfolio photos use an `order` slot system**, not a growing list.
   Confirming with an `order` that already has a photo replaces that photo
-  (same slot, new key) rather than adding a 6th. Confirming with a new
-  `order` when 5 slots are already filled returns `400 Bad Request`.
+  (same slot, new key). Free trainers have slots `1`–`5`; FitWork Pro trainers
+  have slots `1`–`20` (see [the limit](#portfolio-photo-limit-free-5--pro-20)
+  below). A slot above the trainer's limit returns `403` with
+  `code: "PRO_REQUIRED"`.
 - **Only trainers can use the portfolio endpoints.** A client account calling
   them gets `400 Bad Request` ("Only trainers can have portfolio photos").
 
@@ -127,8 +129,13 @@ POST /api/v1/users/me/portfolio-photos/presign
 Authorization: Bearer <accessToken>
 Content-Type: application/json
 
-{ "contentType": "image/png" }
+{ "contentType": "image/png", "order": 1 }
 ```
+
+`order` is optional. When sent, a slot above the trainer's limit is rejected
+here with `403 PRO_REQUIRED`, before any bytes are uploaded; when omitted, the
+limit is only enforced at confirm (step 6). Send it when you know the target
+slot — a free trainer replacing a photo in slot 1–5 is always allowed.
 
 **Response `200`** — same shape as step 1:
 ```json
@@ -152,9 +159,10 @@ Content-Type: application/json
 { "key": "users/<trainerId>/portfolio/<uuid>.png", "order": 1 }
 ```
 
-`order` must be an integer `1`–`5` — this is the display slot, not an
-auto-incrementing index. Re-confirming the same `order` replaces the photo in
-that slot.
+`order` must be an integer `1`–`20` (anything outside that is `400`) — this
+is the display slot, not an auto-incrementing index. Re-confirming the same
+`order` replaces the photo in that slot. The slot must also be within the
+trainer's own limit: `1`–`5` free, `1`–`20` Pro.
 
 **Response `200`**
 ```json
@@ -168,11 +176,16 @@ that slot.
 }
 ```
 
-**Error `400`** if the trainer already has 5 photos and `order` isn't one of
-their existing slots:
+**Error `403`** if `order` is above the trainer's limit (a free trainer
+asking for slot 6–20):
 ```json
-{ "message": "A trainer can have at most 5 portfolio photos", "statusCode": 400 }
+{
+  "statusCode": 403,
+  "code": "PRO_REQUIRED",
+  "message": "Free accounts can have up to 5 portfolio photos. Upgrade to FitWork Pro for up to 20."
+}
 ```
+The app should treat `code: "PRO_REQUIRED"` as "open the Pro paywall".
 
 ### 7. List a trainer's portfolio photos (public, any authenticated user)
 
@@ -181,7 +194,10 @@ GET /api/v1/trainers/:trainerId/portfolio-photos
 Authorization: Bearer <accessToken>
 ```
 
-**Response `200`** — array sorted by `order` ascending:
+**Response `200`** — array sorted by `order` ascending, limited to the
+trainer's current limit (slots `1`–`5` if their Pro is not active, so photos
+left in slots 6–20 after Pro lapses are hidden, not deleted — they reappear if
+the trainer subscribes again):
 ```json
 [
   { "id": "...", "trainerId": "...", "key": "...", "order": 1, "createdAt": "...", "url": "https://pub-.../..." },
@@ -229,3 +245,17 @@ async function uploadProfilePhoto(imageFile) {
 
 Portfolio upload follows the identical shape, just with the
 `/portfolio-photos/...` endpoints and an extra `order` field on confirm.
+
+---
+
+## Portfolio photo limit (free 5 / Pro 20)
+
+The number of slots depends on whether the trainer's FitWork Pro is **active
+right now**, judged from `Subscription.expiresAt > now` — not from the
+`User.isPro` flag, which is only a search-ranking badge and can lag a missed
+webhook by up to a day. `GET /api/v1/subscriptions/me` returns the current
+value as `portfolioPhotoLimit`.
+
+When Pro lapses, nothing is deleted from R2 or the database. Photos in slots
+above 5 stop being listed and can't be added to; the trainer can still replace
+or delete anything in slots 1–5, and all 20 slots come back on re-subscribing.

@@ -13,6 +13,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { computeFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
+import { refreshTrainerRating } from '../shared/trainer-rating.util';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { FindReviewsDto } from './dto/find-reviews.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
@@ -75,15 +76,22 @@ export class ReviewsService {
       );
     }
 
-    const review = await this.prisma.review.create({
-      data: {
-        score: createReviewDto.score,
-        comment: createReviewDto.comment,
-        reviewerId,
-        targetUserId: purchase.course.trainerId,
-        purchaseId: purchase.id,
-        isAnonymous: createReviewDto.isAnonymous ?? false,
-      },
+    const trainerId = purchase.course.trainerId;
+    const review = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.review.create({
+        data: {
+          score: createReviewDto.score,
+          comment: createReviewDto.comment,
+          reviewerId,
+          targetUserId: trainerId,
+          purchaseId: purchase.id,
+          isAnonymous: createReviewDto.isAnonymous ?? false,
+        },
+      });
+
+      await refreshTrainerRating(tx, trainerId);
+
+      return created;
     });
 
     await this.notificationsService.create({

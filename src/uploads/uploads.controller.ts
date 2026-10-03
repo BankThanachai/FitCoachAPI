@@ -13,6 +13,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { ConfirmPortfolioPhotoDto } from './dto/confirm-portfolio-photo.dto';
 import { ConfirmProfilePhotoDto } from './dto/confirm-profile-photo.dto';
+import { PresignPortfolioPhotoDto } from './dto/presign-portfolio-photo.dto';
 import { PresignUploadDto } from './dto/presign-upload.dto';
 import { UploadsService } from './uploads.service';
 
@@ -46,11 +47,11 @@ export class UploadsController {
   @Post('users/me/portfolio-photos/presign')
   presignPortfolioPhoto(
     @Req() request: Request & { user: JwtPayload },
-    @Body() presignUploadDto: PresignUploadDto,
+    @Body() presignPortfolioPhotoDto: PresignPortfolioPhotoDto,
   ) {
     return this.uploadsService.presignPortfolioPhoto(
       request.user.sub,
-      presignUploadDto,
+      presignPortfolioPhotoDto,
     );
   }
 

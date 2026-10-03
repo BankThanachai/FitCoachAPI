@@ -1,4 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -20,6 +21,7 @@ import { CoursePurchasesModule } from './course-purchases/course-purchases.modul
 import { PaymentsModule } from './payments/payments.module';
 import { PersonalLogsModule } from './personal-logs/personal-logs.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -41,6 +43,7 @@ import { UploadsModule } from './uploads/uploads.module';
         { name: 'auth', ttl: 60_000, limit: 10, blockDuration: 30 * 60_000 },
       ],
     }),
+    ScheduleModule.forRoot(),
     UsersModule,
     PrismaModule,
     AuthModule,
@@ -58,6 +61,7 @@ import { UploadsModule } from './uploads/uploads.module';
     PaymentsModule,
     PersonalLogsModule,
     UploadsModule,
+    SubscriptionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

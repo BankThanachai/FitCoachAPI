@@ -7,6 +7,7 @@ import { UserType } from '../../generated/prisma/client';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CouponsService } from '../coupons/coupons.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { refreshTrainerRating } from '../shared/trainer-rating.util';
 import { CreateTrainerCourseDto } from './dto/create-trainer-course.dto';
 import { UpdateTrainerCourseDto } from './dto/update-trainer-course.dto';
 
@@ -93,6 +94,13 @@ export class TrainerCoursesService {
 
   async remove(trainerId: string, id: string) {
     await this.ensureOwnedByTrainer(trainerId, id);
-    return this.prisma.trainerCourse.delete({ where: { id } });
+    // Deleting a course cascades to its purchases and, from there, to the
+    // reviews on them, so the trainer's cached rating/reviewCount has to be
+    // refreshed in the same transaction.
+    return this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.trainerCourse.delete({ where: { id } });
+      await refreshTrainerRating(tx, trainerId);
+      return deleted;
+    });
   }
 }

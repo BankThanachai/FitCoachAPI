@@ -8,11 +8,17 @@ import { randomUUID } from 'crypto';
 import { UserType } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../shared/r2.service';
+import { ProRequiredException } from '../subscriptions/pro-required.exception';
+import {
+  FREE_PORTFOLIO_PHOTO_LIMIT,
+  PRO_PORTFOLIO_PHOTO_LIMIT,
+} from '../subscriptions/subscription.constants';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { ConfirmPortfolioPhotoDto } from './dto/confirm-portfolio-photo.dto';
 import { ConfirmProfilePhotoDto } from './dto/confirm-profile-photo.dto';
+import { PresignPortfolioPhotoDto } from './dto/presign-portfolio-photo.dto';
 import { PresignUploadDto } from './dto/presign-upload.dto';
 
-const MAX_PORTFOLIO_PHOTOS = 5;
 const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -24,6 +30,7 @@ export class UploadsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
+    private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
   private buildKey(prefix: string, contentType: string) {
@@ -58,8 +65,14 @@ export class UploadsService {
     };
   }
 
-  async presignPortfolioPhoto(trainerId: string, dto: PresignUploadDto) {
+  async presignPortfolioPhoto(
+    trainerId: string,
+    dto: PresignPortfolioPhotoDto,
+  ) {
     await this.ensureTrainer(trainerId);
+    if (dto.order !== undefined) {
+      await this.ensureSlotAllowed(trainerId, dto.order);
+    }
     const key = this.buildKey(`users/${trainerId}/portfolio`, dto.contentType);
     const uploadUrl = await this.r2Service.getUploadUrl(key, dto.contentType);
     return { uploadUrl, key };
@@ -70,18 +83,11 @@ export class UploadsService {
     dto: ConfirmPortfolioPhotoDto,
   ) {
     await this.ensureTrainer(trainerId);
+    await this.ensureSlotAllowed(trainerId, dto.order);
 
-    const count = await this.prisma.trainerPortfolioPhoto.count({
-      where: { trainerId },
-    });
     const existing = await this.prisma.trainerPortfolioPhoto.findUnique({
       where: { trainerId_order: { trainerId, order: dto.order } },
     });
-    if (!existing && count >= MAX_PORTFOLIO_PHOTOS) {
-      throw new BadRequestException(
-        `A trainer can have at most ${MAX_PORTFOLIO_PHOTOS} portfolio photos`,
-      );
-    }
 
     const photo = await this.prisma.trainerPortfolioPhoto.upsert({
       where: { trainerId_order: { trainerId, order: dto.order } },
@@ -97,8 +103,13 @@ export class UploadsService {
   }
 
   async findPortfolioPhotos(trainerId: string) {
+    // A trainer whose Pro lapsed may still have photos in slots above the
+    // free limit. They stay stored (and come back on re-subscribing) but
+    // aren't shown while the account is on the free limit.
+    const limit =
+      await this.subscriptionsService.getPortfolioPhotoLimit(trainerId);
     const photos = await this.prisma.trainerPortfolioPhoto.findMany({
-      where: { trainerId },
+      where: { trainerId, order: { lte: limit } },
       orderBy: { order: 'asc' },
     });
     return photos.map((photo) => ({
@@ -122,6 +133,22 @@ export class UploadsService {
     });
     await this.r2Service.deleteObject(deleted.key);
     return deleted;
+  }
+
+  // The number of slots a trainer may use depends on whether Pro is active
+  // right now (Subscription.expiresAt, not the User.isPro flag, which can lag
+  // a missed webhook). Slots are unique per (trainerId, order), so capping
+  // which `order` is allowed also caps how many photos can be shown — and,
+  // unlike counting photos, still lets a lapsed-Pro trainer who has leftover
+  // photos above the limit replace or fill a slot inside it.
+  private async ensureSlotAllowed(trainerId: string, order: number) {
+    const limit =
+      await this.subscriptionsService.getPortfolioPhotoLimit(trainerId);
+    if (order > limit) {
+      throw new ProRequiredException(
+        `Free accounts can have up to ${FREE_PORTFOLIO_PHOTO_LIMIT} portfolio photos. Upgrade to FitWork Pro for up to ${PRO_PORTFOLIO_PHOTO_LIMIT}.`,
+      );
+    }
   }
 
   private async ensureTrainer(userId: string) {

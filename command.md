@@ -253,6 +253,24 @@ Response ของ `GET /reviews/user/:userId`:
 
 ---
 
+## 9. FitWork Pro (ตั้ง Pro ด้วยมือในเครื่อง dev)
+
+ยังไม่มี Apple/Google account หรือโปรเจกต์ RevenueCat จึงซื้อจริงไม่ได้ ใช้สคริปต์นี้สลับสถานะ Pro
+ของเทรนเนอร์เพื่อทดสอบการเรียงอันดับค้นหา เพดานรูปผลงาน และ `GET /subscriptions/me`
+(เขียนทั้งตาราง `Subscription` และ `User.isPro` เหมือนที่ sync จริงทำ) **ห้ามรันกับ production**
+
+```bash
+# Pro 30 วัน (phone = เบอร์ login ของเทรนเนอร์ ตามที่เก็บใน DB)
+docker compose exec -T db psql -U fitwork -d fitwork -v phone='+66812345678' -v days=30 < prisma/dev/set-pro.sql
+
+# จำลอง Pro ที่หมดอายุแล้ว
+docker compose exec -T db psql -U fitwork -d fitwork -v phone='+66812345678' -v days=-1 < prisma/dev/set-pro.sql
+```
+
+รายละเอียด flow ทั้งหมดดู `docs/pro-subscription.md`
+
+---
+
 ## สรุปลำดับสั้นๆ (ถ้าจำได้แค่บรรทัดเดียว)
 
 ```

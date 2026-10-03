@@ -18,7 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { withFullName } from '../shared/name.util';
 import { paginate } from '../shared/pagination.util';
 import { R2Service } from '../shared/r2.service';
-import { roundScore } from '../shared/score.util';
+import { refreshTrainerRating } from '../shared/trainer-rating.util';
 import { WorkingHoursService } from '../working-hours/working-hours.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { SearchTrainerDto } from './dto/search-trainer.dto';
@@ -137,7 +137,16 @@ export class UsersService {
       this.prisma.user.findMany({
         where,
         include: { bankAccounts: true },
-        orderBy: [{ rating: 'desc' }, { firstName: 'asc' }],
+        // Pro trainers first, then best-rated, then most-reviewed. firstName
+        // and id are only tie-breakers: with them the order is total, so
+        // pagination can't repeat or skip a trainer between pages.
+        orderBy: [
+          { isPro: 'desc' },
+          { rating: 'desc' },
+          { reviewCount: 'desc' },
+          { firstName: 'asc' },
+          { id: 'asc' },
+        ],
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
@@ -146,36 +155,27 @@ export class UsersService {
 
     const trainerIds = users.map((user) => user.id);
 
-    const [clientTrainerRelations, scoresByTrainer, clientCountsByTrainer] =
-      await Promise.all([
-        this.prisma.clientTrainer.findMany({
-          where: { clientId, trainerId: { in: trainerIds } },
-          select: { trainerId: true, status: true },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.review.groupBy({
-          by: ['targetUserId'],
-          where: { targetUserId: { in: trainerIds } },
-          _avg: { score: true },
-        }),
-        this.prisma.clientTrainer.groupBy({
-          by: ['trainerId'],
-          where: {
-            trainerId: { in: trainerIds },
-            status: ClientTrainerStatus.Accepted,
-          },
-          _count: true,
-        }),
-      ]);
+    const [clientTrainerRelations, clientCountsByTrainer] = await Promise.all([
+      this.prisma.clientTrainer.findMany({
+        where: { clientId, trainerId: { in: trainerIds } },
+        select: { trainerId: true, status: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.clientTrainer.groupBy({
+        by: ['trainerId'],
+        where: {
+          trainerId: { in: trainerIds },
+          status: ClientTrainerStatus.Accepted,
+        },
+        _count: true,
+      }),
+    ]);
     const statusByTrainerId = new Map<string, ClientTrainerStatus>();
     for (const relation of clientTrainerRelations) {
       if (!statusByTrainerId.has(relation.trainerId)) {
         statusByTrainerId.set(relation.trainerId, relation.status);
       }
     }
-    const averageScoreByTrainerId = new Map(
-      scoresByTrainer.map((row) => [row.targetUserId, row._avg.score]),
-    );
     const clientCountByTrainerId = new Map(
       clientCountsByTrainer.map((row) => [row.trainerId, row._count]),
     );
@@ -185,7 +185,9 @@ export class UsersService {
         ...this.withComputedFields(excludePassword(user)),
         isFriend: statusByTrainerId.has(user.id),
         clientTrainerStatus: statusByTrainerId.get(user.id) ?? null,
-        averageScore: roundScore(averageScoreByTrainerId.get(user.id) ?? null),
+        // Read from the cached column (kept current by refreshTrainerRating)
+        // rather than aggregating reviews per request.
+        averageScore: user.rating,
         totalClients: clientCountByTrainerId.get(user.id) ?? 0,
       })),
       page,
@@ -215,12 +217,8 @@ export class UsersService {
       };
     }
 
-    const [workingHours, aggregate, totalClients] = await Promise.all([
+    const [workingHours, totalClients] = await Promise.all([
       this.workingHoursService.findByUser(id),
-      this.prisma.review.aggregate({
-        where: { targetUserId: id },
-        _avg: { score: true },
-      }),
       this.prisma.clientTrainer.count({
         where: { trainerId: id, status: ClientTrainerStatus.Accepted },
       }),
@@ -230,7 +228,7 @@ export class UsersService {
       ...this.withComputedFields(excludePassword(user)),
       ...verification,
       workingHours,
-      averageScore: roundScore(aggregate._avg.score),
+      averageScore: user.rating,
       totalClients,
     };
   }
@@ -270,9 +268,26 @@ export class UsersService {
 
   async remove(id: string) {
     await this.ensureUserExists(id);
-    const user = await this.prisma.user.delete({
-      where: { id },
-      include: { bankAccounts: true },
+    const user = await this.prisma.$transaction(async (tx) => {
+      // Deleting a client cascades to the reviews they wrote, so every trainer
+      // they reviewed needs their cached rating/reviewCount refreshed. (Deleting
+      // a trainer needs nothing: the reviews about them go with them.)
+      const reviewed = await tx.review.findMany({
+        where: { reviewerId: id },
+        select: { targetUserId: true },
+        distinct: ['targetUserId'],
+      });
+
+      const deleted = await tx.user.delete({
+        where: { id },
+        include: { bankAccounts: true },
+      });
+
+      // Sorted so concurrent deletions lock trainer rows in the same order.
+      for (const trainerId of reviewed.map((r) => r.targetUserId).sort()) {
+        await refreshTrainerRating(tx, trainerId);
+      }
+      return deleted;
     });
     return this.withComputedFields(excludePassword(user));
   }
